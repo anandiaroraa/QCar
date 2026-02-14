@@ -20,6 +20,7 @@ from qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, 
 from utils import wrap_angle
 #from PathPlanning.CubicSpline import cubic_spline_planner 
 from circular_path import calc_circle_course, demo_circle
+#from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
 T = 5  # horizon length
@@ -387,7 +388,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
             plt.plot(x, y, "ob", label="trajectory")
             plt.plot(xref[0, :], xref[1, :], "xk", label="xref")
             plt.plot(cx[target_ind], cy[target_ind], "xg", label="target")
-            plot_car(state.x, state.y, state.yaw, steer=di)
+            plot_car(state.x, state.y, state.yaw)
             plt.axis("equal")
             plt.grid(True)
             plt.title("Time[s]:" + str(round(time, 2))
@@ -439,7 +440,7 @@ def smooth_yaw(yaw):
             dyaw = yaw[i + 1] - yaw[i]
 
     return yaw
-
+'''
 def get_straight_course(dl):
     ax = [0.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0]
     ay = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -488,17 +489,40 @@ def get_switch_back_course(dl):
     ck.extend(ck2)
 
     return cx, cy, cyaw, ck
+'''
 
+def get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0, clockwise=False):
+    #dl as ds to keep naming consistent in your MPC pipeline
+    cx, cy, cyaw, ck, s = calc_circle_course(
+        radius=radius, ds=dl, center_x=center_x, center_y=center_y, clockwise=clockwise
+    )
+    return cx, cy, cyaw, ck
+
+"""
+def get_lemniscate_course(dl, a=2.0):
+    cx, cy = generate_lemniscate(a=a)
+    cyaw = compute_yaw(cx, cy)
+    ck = compute_curvature(cx, cy)
+
+    # Resample to have points at approximately dl distance
+    distance = np.cumsum(np.sqrt(np.diff(cx)**2 + np.diff(cy)**2))
+    distance = np.insert(distance, 0, 0)  # insert starting point
+    total_length = distance[-1]
+    num_points = int(total_length / dl)
+
+    resampled_cx = np.interp(np.linspace(0, total_length, num_points), distance, cx)
+    resampled_cy = np.interp(np.linspace(0, total_length, num_points), distance, cy)
+    resampled_cyaw = np.interp(np.linspace(0, total_length, num_points), distance, cyaw)
+    resampled_ck = np.interp(np.linspace(0, total_length, num_points), distance, ck)
+
+    return resampled_cx.tolist(), resampled_cy.tolist(), resampled_cyaw.tolist(), resampled_ck.tolist()
+"""
 def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 1.0  # course tick
-    # cx, cy, cyaw, ck = get_straight_course(dl)
-    # cx, cy, cyaw, ck = get_straight_course2(dl)
-    # cx, cy, cyaw, ck = get_straight_course3(dl)
-    # cx, cy, cyaw, ck = get_forward_course(dl)
-    cx, cy, cyaw, ck = get_switch_back_course(dl)
+    dl = 0.1
+    cx, cy, cyaw, ck = get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0)
 
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
@@ -529,7 +553,7 @@ def main():
 
         plt.show()
 
-
+'''
 def main2():
     print(__file__ + " start!!")
     start = time.time()
@@ -565,6 +589,7 @@ def main2():
         plt.ylabel("Speed [kmh]")
 
         plt.show()
+    '''
 
 if __name__ == '__main__':
     main()
