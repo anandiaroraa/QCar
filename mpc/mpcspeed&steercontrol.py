@@ -70,9 +70,9 @@ def pi_2_pi(angle):
 
 def get_linear_model_matrix(v, phi, delta):
 
+    #added
     # 1) Keep angles sane
     phi = (phi + np.pi) % (2 * np.pi) - np.pi
-
     # 2) Clamp steering to avoid cos(delta)^2 blowing up
     delta = float(np.clip(delta, -MAX_STEER, MAX_STEER))
 

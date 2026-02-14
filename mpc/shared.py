@@ -55,7 +55,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     
     give_command1 = rospy.Publisher("/qcar/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
 
-    car1_history = [], [], []
+    car1_history = []
 
     # collected_data = []
     # processed_data = np.array([])
