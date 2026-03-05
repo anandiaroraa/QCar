@@ -47,10 +47,10 @@ class Data():
     def update_car1_pose(self, msg):
         pose = msg.pose.position
         orientation = msg.pose.orientation
-        self.car1.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
-        self.car1.theta = quat2euler([orientation.w, orientation.x,orientation.y,orientation.z])[2]
-        self.car1.x = pose.x
-        self.car1.y = pose.y
+        self.car1.quat = [orientation.x, orientation.y, orientation.z, orientation.w]
+        self.car1.theta = quat2euler([orientation.x, orientation.y, orientation.z, orientation.w])[2]
+        self.car1.x = pose.z
+        self.car1.y = -pose.x
         #added mark received + estimate speed
         self.car1.received = True
         now = time.time()
@@ -174,7 +174,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #center_x = data.car1.x
     #center_y = data.car1.y
     center_x = data.car1.x 
-    center_y = data.car1.y + radius
+    center_y = data.car1.y 
 
     target_speed = float(cfg.get("target_speed", 0.6))
 
@@ -187,24 +187,31 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     cy = (center_y + radius * np.sin(theta)).tolist()
     #cyaw = (theta + math.pi / 2.0).tolist()
     #cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
-    cyaw = (theta).tolist()  # raw theta gives correct tangent
-    cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
+    #cyaw = (theta).tolist()  # raw theta gives correct tangent
+    #cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
     #cyaw = ((theta + (-math.pi / 2.0 if clockwise else math.pi / 2.0) + math.pi) % (2.0 * math.pi) - math.pi).tolist()
-    """# Correct tangent yaw for circle
-    if clockwise:
-        cyaw = (theta - math.pi / 2.0).tolist()
+    # FIX — correct tangent direction
+    '''if clockwise:
+        cyaw = [(((y - math.pi/2.0) + math.pi) % (2*math.pi)) - math.pi for y in theta.tolist()]
     else:
-        #cyaw = (theta + math.pi / 2.0).tolist()
-        #cyaw = (theta + math.pi / 2.0).tolist()
-        cyaw = (theta).tolist()
-    # Wrap to [-pi, pi]
-    cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
-    """
+        cyaw = [(((y + math.pi/2.0) + math.pi) % (2*math.pi)) - math.pi for y in theta.tolist()]
+    
     #added_changed for yaw mismatch
     ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
 
     sp = calc_speed_profile(cx, cy, cyaw, target_speed)
-    cyaw = smooth_yaw(cyaw)
+    '''
+    # Correct tangent yaw + wrap + smooth
+    if clockwise:
+        cyaw = [(((y - math.pi / 2.0) + math.pi) % (2 * math.pi)) - math.pi for y in theta.tolist()]
+    else:
+        cyaw = [(((y + math.pi / 2.0) + math.pi) % (2 * math.pi)) - math.pi for y in theta.tolist()]
+
+    ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
+
+    sp = calc_speed_profile(cx, cy, cyaw, target_speed)
+    
+    #cyaw = smooth_yaw(cyaw)
 
     start_time = time.time()
     max_time = float(cfg.get("max_time", 250.0))
