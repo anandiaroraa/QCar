@@ -174,7 +174,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #center_x = data.car1.x
     #center_y = data.car1.y
     center_x = data.car1.x 
-    center_y = data.car1.y
+    center_y = data.car1.y + radius
 
     target_speed = float(cfg.get("target_speed", 0.6))
 
@@ -185,15 +185,21 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     cx = (center_x + radius * np.cos(theta)).tolist()
     cy = (center_y + radius * np.sin(theta)).tolist()
+    #cyaw = (theta + math.pi / 2.0).tolist()
+    #cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
+    cyaw = (theta).tolist()  # raw theta gives correct tangent
+    cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
     #cyaw = ((theta + (-math.pi / 2.0 if clockwise else math.pi / 2.0) + math.pi) % (2.0 * math.pi) - math.pi).tolist()
-    # Correct tangent yaw for circle
+    """# Correct tangent yaw for circle
     if clockwise:
         cyaw = (theta - math.pi / 2.0).tolist()
     else:
-        cyaw = (theta + math.pi / 2.0).tolist()
-
+        #cyaw = (theta + math.pi / 2.0).tolist()
+        #cyaw = (theta + math.pi / 2.0).tolist()
+        cyaw = (theta).tolist()
     # Wrap to [-pi, pi]
     cyaw = [((y + math.pi) % (2 * math.pi)) - math.pi for y in cyaw]
+    """
     #added_changed for yaw mismatch
     ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
 
