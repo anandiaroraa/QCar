@@ -230,7 +230,6 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
         x0 = [state.x, state.y, state.v, state.yaw]
 
-        """ debugging
         oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
         
         if oa is None or odelta is None:
@@ -255,9 +254,11 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         else:
             oa, odelta = oa_new, odelta_new
             a_cmd = float(oa[0])
-            steer1 = float(odelta[0])
-            speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))
+            
+        steer1 = float(odelta[0])
+        speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))
         #test
+        """
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
         speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
 
