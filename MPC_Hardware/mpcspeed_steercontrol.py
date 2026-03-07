@@ -27,8 +27,10 @@ T = 5  # horizon length
 
 # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
-Rd = np.diag([0.01, 1.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+# Rd = np.diag([0.01, 1.0])  # input difference cost matrix
+# Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q  = np.diag([1.0, 1.0, 0.2, 0.8])# reduce v weight, increase yaw weight
+Rd = np.diag([0.1, 1.0])# penalize aggressive acceleration more
 Qf = Q  # state final matrix
 GOAL_DIS = 1.5  # goal distance
 STOP_SPEED = 0.05  # stop speed
@@ -218,6 +220,11 @@ def linear_mpc_control(xref, xbar, x0, dref):
     cost = 0.0
     constraints = []
 
+    x0_yaw = x0[3]
+    for t in range(T + 1):
+        diff = xref[3, t] - x0_yaw
+        xref[3, t] -= round(diff / (2 * math.pi)) * 2 * math.pi
+        
     for t in range(T):
         cost += cvxpy.quad_form(u[:, t], R)
 
@@ -236,8 +243,10 @@ def linear_mpc_control(xref, xbar, x0, dref):
     cost += cvxpy.quad_form(xref[:, T] - x[:, T], Qf)
 
     constraints += [x[:, 0] == x0]
-    constraints += [x[2, :] <= MAX_SPEED]
-    constraints += [x[2, :] >= MIN_SPEED]
+    #constraints += [x[2, :] <= MAX_SPEED]
+    constraints += [x[2, 1:] <= MAX_SPEED]
+    #constraints += [x[2, :] >= MIN_SPEED]
+    constraints += [x[2, :] >= 0.0]
     constraints += [cvxpy.abs(u[0, :]) <= MAX_ACCEL]
     constraints += [cvxpy.abs(u[1, :]) <= MAX_STEER]
 
@@ -280,9 +289,8 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     dref[0, 0] = 0.0  # steer operational point should be 0
 
     travel = 0.0
-
     for i in range(1, T + 1):
-        travel += abs(state.v) * DT
+        travel += max(abs(state.v), 0.1) * DT
         dind = int(round(travel / dl))
 
         if (ind + dind) < ncourse:

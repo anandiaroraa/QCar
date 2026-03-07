@@ -51,6 +51,12 @@ class Data():
         self.car1.theta = quat2euler([orientation.x, orientation.y, orientation.z, orientation.w])[2]
         self.car1.x = pose.z
         self.car1.y = -pose.x
+        if not hasattr(self.car1, '_print_count'):
+            self.car1._print_count = 0
+        self.car1._print_count += 1
+        if self.car1._print_count % 10 == 0:
+            print(f"x={self.car1.x:.3f} y={self.car1.y:.3f} yaw={np.rad2deg(self.car1.theta):.1f}deg")
+        #print(f"raw: x={pose.x:.3f} y={pose.y:.3f} z={pose.z:.3f} | mapped: x={self.car1.x:.3f} y={self.car1.y:.3f} yaw={np.rad2deg(self.car1.theta):.1f}deg")
         #added mark received + estimate speed
         self.car1.received = True
         now = time.time()
@@ -143,7 +149,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     start_time = time.time()
     max_time = 250
-    #state_machine = ControlStateMachine(sim_env, object_goal_pose, at_pushing_pose, path_tracking_config)
+    #state_machine = ControlStateMachine(sim_env, object_goal_pose, at_pushing_pose, path_
+    # cking_config)
     
     #while state_machine.state != REACHED_GOAL and time.time() - start_time < max_time:
         #state_machine.update_poses(data=data)
@@ -167,16 +174,18 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #added my mpc
     cfg = path_tracking_config or {}
     radius = float(cfg.get("radius", 1.5))
-    dl = float(cfg.get("ds", 0.05))
+    dl = float(cfg.get("ds", 0.5)) #increased from 0.05 to 0.5
     clockwise = bool(cfg.get("clockwise", False))
     #center_x = float(cfg.get("center_x", 0.0))
     #center_y = float(cfg.get("center_y", 0.0))
     #center_x = data.car1.x
     #center_y = data.car1.y
-    center_x = data.car1.x 
-    center_y = data.car1.y 
+    yaw0 = data.car1.theta
+    center_x = data.car1.x - radius * np.sin(yaw0)
+    center_y = data.car1.y + radius * np.cos(yaw0)
 
-    target_speed = float(cfg.get("target_speed", 0.6))
+
+    target_speed = float(cfg.get("target_speed", 0.18))
 
     # Fallback circle waypoints (keeps shared.py light)
     circumference = 2.0 * math.pi * radius
@@ -217,19 +226,40 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     max_time = float(cfg.get("max_time", 250.0))
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
-
+    '''
     target_ind, _ = calc_nearest_index(
         State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v),
         cx, cy, cyaw, 0
     )
+    '''
+    # Search the FULL circle for the nearest starting point
+    target_ind = 0
+    min_dist = float('inf')
+    for i in range(len(cx)):
+        d = math.hypot(data.car1.x - cx[i], data.car1.y - cy[i])
+        if d < min_dist:
+            min_dist = d
+            target_ind = i
+    print(f"target_ind at start: {target_ind}, dist to first waypoint: {min_dist:.3f}m")
+    # circle checking
+    print(f"Car start: x={data.car1.x:.3f}, y={data.car1.y:.3f}, yaw={np.rad2deg(data.car1.theta):.1f}deg")
+    print(f"Circle center: x={center_x:.3f}, y={center_y:.3f}, radius={radius}")
+    print(f"First waypoint: x={cx[0]:.3f}, y={cy[0]:.3f}")
+    print(f"target_ind at start: {target_ind}")
+    print(f"cyaw at target_ind: {np.rad2deg(cyaw[target_ind]):.1f}deg")
+    print(f"car yaw: {np.rad2deg(data.car1.theta):.1f}deg")
     #oa, odelta = None, None
-    oa, odelta = [0.0] * 5, [0.0] * 5
+    a_cmd = 0.0
+    last_speed_cmd = 0.0 
+
+    oa, odelta = [0.0] * 5, [0.0] * 5 #T-horizon 
+
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
 
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
         x0 = [state.x, state.y, state.v, state.yaw]
-
+        '''
         oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
         
         if oa is None or odelta is None:
@@ -238,7 +268,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             a_cmd = float(oa[0])                  # accel output
             steer1 = float(odelta[0])             # steer output
             speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED)) 
-        """ # accel -> speed
+        ''' # accel -> speed
         #test this
         try:
             result = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
@@ -250,17 +280,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         if oa_new is None or odelta_new is None:
             # Don't crash, just send a small forward speed
             steer1 = 0.0
-            speed1 = 0.1  # nudge forward
+            speed1 = 0.0  # nudge forward
         else:
             oa, odelta = oa_new, odelta_new
             a_cmd = float(oa[0])
-            
-        steer1 = float(odelta[0])
-        speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))
+            steer1 = float(odelta[0])
+            speed1 = float(np.clip(last_speed_cmd + a_cmd * DT, MIN_SPEED, MAX_SPEED))
+            last_speed_cmd = speed1
+         # After the if/else block, before publishing
+        print(f"steer1={np.rad2deg(steer1):.2f}deg, speed1={speed1:.3f}m/s, v={state.v:.3f}, a_cmd={a_cmd if oa_new is not None else 'N/A'}")   
         #test
-        """
+        
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
-        speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
+        speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED)) if speed1 > 0 else 0.0
 
         drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
         drive_msg1 = AckermannDriveStamped()
@@ -309,8 +341,8 @@ if __name__ == "__main__":
         try:
             car1_hist, orig_path, exec_time, goal = run_car(test_case, True, path_tracking_config={
                     "radius": 1.5,
-                    "ds": 0.05,
-                    "target_speed": 0.6,
+                    "ds": 0.5,
+                    "target_speed": 0.18,
                     "clockwise": False,
                     "max_time": 60.0,
                 },)
