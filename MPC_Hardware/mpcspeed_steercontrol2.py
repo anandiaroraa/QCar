@@ -5,7 +5,7 @@ Path tracking simulation with iterative linear model predictive control for spee
 author: Atsushi Sakai (@Atsushi_twi)
 
 """
-import matplotlib.pyplot as plt 
+#import matplotlib.pyplot as plt 
 import time
 import cvxpy
 import math
@@ -14,12 +14,12 @@ import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
-from qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
+from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
 
 #from utils.angle import angle_mod
-from utils import wrap_angle
+from .utils import wrap_angle
 #from PathPlanning.CubicSpline import cubic_spline_planner 
-from circular_path import calc_circle_course, demo_circle
+from .circular_path import calc_circle_course, demo_circle
 #from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
@@ -51,7 +51,7 @@ WIDTH = 0.192  # [m]
 #TREAD = 0.7  # [m]
 
 
-show_animation = True  # simulation
+show_animation = False  # simulation
 
 
 class State:
@@ -101,7 +101,7 @@ def get_linear_model_matrix(v, phi, delta):
     C[3] = - DT * v * delta / (WB * math.cos(delta) ** 2)
 
     return A, B, C
-
+'''
 def plot_car(x, y, yaw=0.0, radius=0.1, color="r"): #circular car
     circle = plt.Circle((x, y), radius, fill=False, color=color)
     plt.gca().add_patch(circle)
@@ -110,7 +110,7 @@ def plot_car(x, y, yaw=0.0, radius=0.1, color="r"): #circular car
     dx = radius * np.cos(yaw)
     dy = radius * np.sin(yaw)
     plt.arrow(x, y, dx, dy, head_width=0.03, head_length=0.03, fc=color, ec=color)
-
+'''
 def update_state(state, a, delta):
 
     # input check
@@ -188,7 +188,17 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, od, xref)
         poa, pod = oa[:], od[:]
-        oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
+        # run one MPC iteration
+        result = linear_mpc_control(xref, xbar, x0, dref)
+        oa, od, ox, oy, oyaw, ov = result
+        # linear_mpc_control may return None if solver failed
+        if oa is None or od is None:
+            # keep previous control sequence and abort further updates
+            print("Warning: linear_mpc_control failed on iteration", i, "status."
+                  " using previous oa/od and stopping iterative updates.")
+            oa, od = poa, pod
+            break
+        # calculate input change; safe because both are numeric arrays/lists
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
             break
@@ -249,7 +259,8 @@ def linear_mpc_control(xref, xbar, x0, dref):
         odelta = get_nparray_from_matrix(u.value[1, :])
 
     else:
-        print("Error: Cannot solve mpc..")
+        # include solver status for debugging
+        print(f"Error: Cannot solve mpc (status={prob.status}).")
         oa, odelta, ox, oy, oyaw, ov = None, None, None, None, None, None
 
     return oa, odelta, ox, oy, oyaw, ov
@@ -311,7 +322,7 @@ def check_goal(state, goal, tind, nind):
         return True
 
     return False
-
+'''
 def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
     """
     Simulation
@@ -396,7 +407,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
             plt.pause(0.0001)
 
     return t, x, y, yaw, v, d, a
-
+'''
 def calc_speed_profile(cx, cy, cyaw, target_speed):
 
     speed_profile = [target_speed] * len(cx)
@@ -528,12 +539,11 @@ def main():
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
 
-    t, x, y, yaw, v, d, a = do_simulation(
-        cx, cy, cyaw, ck, sp, dl, initial_state)
+
 
     elapsed_time = time.time() - start
     print(f"calc time:{elapsed_time:.6f} [sec]")
-
+    '''
     if show_animation:  # pragma: no cover
         plt.close("all")
         plt.subplots()
@@ -552,7 +562,7 @@ def main():
         plt.ylabel("Speed [kmh]")
 
         plt.show()
-
+'''
 '''
 def main2():
     print(__file__ + " start!!")
@@ -592,5 +602,6 @@ def main2():
     '''
 
 if __name__ == '__main__':
-    main()
+    pass
+    #main()
     # main2()

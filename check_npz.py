@@ -1,60 +1,38 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import glob, os
 
-d = np.load('hardware_results_test1/run_000_t_1772843924.05159.npz', allow_pickle=True)
+files = glob.glob('hardware_results_test1/*.npz')
+latest = max(files, key=os.path.getmtime)
+d = np.load(latest, allow_pickle=True)
+print("Loading:", latest)
+
+#d = np.load('hardware_results_test1/test5.npz', allow_pickle=True)
 hist = d['car1_history']
 
-x    = hist[:, 0]
-y    = hist[:, 1]
-yaw  = hist[:, 2]
-v    = hist[:, 3]
-steer = hist[:, 4]
-speed = hist[:, 5]
+x     = hist[:, 0]
+y     = hist[:, 1]
+theta_start = hist[0, 2]  # yaw at start
 
-# Generate reference circle (same as shared.py)
-radius = 1.5
-center_x = hist[0, 0]
-center_y = hist[0, 1]
+# Reconstruct the actual circle center using the same formula as shared2.py
+radius = 1.0
+center_x = x[0] + radius * math.sin(theta_start)
+center_y = y[0] - radius * math.cos(theta_start)
+
 theta = np.linspace(0, 2*math.pi, 200)
 ref_x = center_x + radius * np.cos(theta)
 ref_y = center_y + radius * np.sin(theta)
 
-fig, axs = plt.subplots(2, 2, figsize=(12, 8))
-
-# Plot 1: Path tracking
-axs[0, 0].plot(ref_x, ref_y, 'r--', label='Reference')
-axs[0, 0].plot(x, y, 'b-', label='Actual')
-axs[0, 0].plot(x[0], y[0], 'go', markersize=10, label='Start')
-axs[0, 0].set_title('Path Tracking')
-axs[0, 0].legend()
-axs[0, 0].axis('equal')
-axs[0, 0].grid(True)
-
-# Plot 2: Speed over time
-t = hist[:, 6] - hist[0, 6]
-axs[0, 1].plot(t, v, label='Estimated v')
-axs[0, 1].plot(t, speed, label='Commanded speed')
-axs[0, 1].set_title('Speed vs Time')
-axs[0, 1].set_xlabel('Time (s)')
-axs[0, 1].legend()
-axs[0, 1].grid(True)
-
-# Plot 3: Steering over time
-axs[1, 0].plot(t, np.rad2deg(steer))
-axs[1, 0].set_title('Steering Angle vs Time')
-axs[1, 0].set_xlabel('Time (s)')
-axs[1, 0].set_ylabel('Degrees')
-axs[1, 0].grid(True)
-
-# Plot 4: Yaw over time
-axs[1, 1].plot(t, np.rad2deg(yaw))
-axs[1, 1].set_title('Yaw vs Time')
-axs[1, 1].set_xlabel('Time (s)')
-axs[1, 1].set_ylabel('Degrees')
-axs[1, 1].grid(True)
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.plot(ref_y, ref_x, 'r--', label='Reference')
+ax.plot(y, x, 'b-', label='Actual')
+ax.plot(y[0], x[0], 'go', markersize=10, label='Start')
+ax.set_title('Path Tracking')
+ax.legend()
+ax.axis('equal')
+ax.grid(True)
 
 plt.tight_layout()
 plt.savefig('path_tracking.png')
 plt.show()
-print("Saved to path_tracking.png")
