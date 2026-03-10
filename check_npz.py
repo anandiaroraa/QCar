@@ -3,13 +3,16 @@ import matplotlib.pyplot as plt
 import math
 import glob, os
 
-files = glob.glob('hardware_results_test1/*.npz')
+files = glob.glob('hardware_results/*.npz')
 latest = max(files, key=os.path.getmtime)
 d = np.load(latest, allow_pickle=True)
 print("Loading:", latest)
 
 #d = np.load('hardware_results_test1/test5.npz', allow_pickle=True)
 hist = d['car1_history']
+
+np.set_printoptions(precision=4, suppress=True)
+print(hist)
 
 x     = hist[:, 0]
 y     = hist[:, 1]
