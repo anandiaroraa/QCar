@@ -1,9 +1,11 @@
+from turtle import speed
+
 import numpy as np
 import matplotlib.pyplot as plt
 import math
 import glob, os
 
-files = glob.glob('hardware_results/*.npz')
+files = glob.glob('hardware_results_test1/*.npz')
 latest = max(files, key=os.path.getmtime)
 d = np.load(latest, allow_pickle=True)
 print("Loading:", latest)
@@ -25,6 +27,10 @@ center_y = y[0] - radius * math.cos(theta_start)
 
 theta = np.linspace(0, 2*math.pi, 200)
 ref_x = center_x + radius * np.cos(theta)
+
+plt.tight_layout()
+plt.savefig('path_tracking.png')
+plt.show()
 ref_y = center_y + radius * np.sin(theta)
 
 fig, ax = plt.subplots(figsize=(6, 6))
@@ -35,6 +41,16 @@ ax.set_title('Path Tracking')
 ax.legend()
 ax.axis('equal')
 ax.grid(True)
+
+dt = 0.1  # whatever your MPC timestep is
+dx = np.diff(x)
+dy = np.diff(y)
+speed = np.sqrt(dx**2 + dy**2) / dt
+
+print(f"Mean speed: {speed.mean():.3f} m/s")
+print(f"Max speed:  {speed.max():.3f} m/s")
+print(f"Min speed:  {speed.min():.3f} m/s")
+
 
 plt.tight_layout()
 plt.savefig('path_tracking.png')
