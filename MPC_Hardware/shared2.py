@@ -171,8 +171,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     clockwise = bool(cfg.get("clockwise", False))
     #center_x = float(cfg.get("center_x", data.car1.x))
     #center_y = float(cfg.get("center_y", data.car1.y))
-    center_x = data.car1.x + radius * math.sin(data.car1.theta)
-    center_y = data.car1.y - radius * math.cos(data.car1.theta)
+    center_x = data.car1.x - radius * math.sin(data.car1.theta)
+    center_y = data.car1.y + radius * math.cos(data.car1.theta)
     print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
@@ -205,10 +205,20 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
     
-    target_ind, _ = calc_nearest_index(
-        State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v),
-        cx, cy, cyaw, 0
-    )
+    # target_ind, _ = calc_nearest_index(
+    #     State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v),
+    #     cx, cy, cyaw, 0
+    # )
+    #so that the mpc starts with the nearest waypoint
+    target_ind = 0
+    min_dist = float('inf')
+    for i in range(len(cx)):
+        d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+        if d < min_dist:
+            min_dist = d
+            target_ind = i
+    print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
+
     oa, odelta = None, None
     #added this
     data.car1.v = MIN_SPEED #starting should be a little warm

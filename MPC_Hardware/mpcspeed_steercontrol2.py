@@ -23,16 +23,24 @@ from .circular_path import calc_circle_course, demo_circle
 #from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 10  # horizon length
+T = 5  # horizon length
 
-# mpc parameters
+# # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 1.5  # goal distance
-STOP_SPEED = 0.05  # stop speed
+GOAL_DIS = 1.0  # goal distance
+#STOP_SPEED = 0.05  # stop speed
 # MAX_TIME = 500.0  # max simulation time
+
+# #mpc tuning
+# R = np.diag([0.01, 0.01])  # input cost matrix
+# Rd = np.diag([0.01, 2.0])  # input difference cost matrix
+# Q = np.diag([2.0, 2.0, 0.5, 1.0])  # state cost matrix
+# Qf = Q  # state final matrix
+# GOAL_DIS = 1.0  # goal distance
+# STOP_SPEED = 0.05  # stop speed
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
