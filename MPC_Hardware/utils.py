@@ -24,8 +24,8 @@ def wrap_angle(angle,
     """
 
     # Convert to numpy array
-    is_scalar = np.isscalar(angle)
-    angle = np.asarray(angle)
+    is_scalar = np.isscalar(angle) #checking if i/p is scalar (on number/list/array)
+    angle = np.asarray(angle) #i/p to array conversion
 
     # Convert degrees → radians if needed
     if degrees:
@@ -33,9 +33,9 @@ def wrap_angle(angle,
 
     # Wrap angle
     if zero_to_2pi:
-        wrapped = angle % (2 * np.pi)
+        wrapped = angle % (2 * np.pi) #taking angle and converting into one full circl range
     else:
-        wrapped = (angle + np.pi) % (2 * np.pi) - np.pi
+        wrapped = (angle + np.pi) % (2 * np.pi) - np.pi #pi-using 10 instead of 350 and 10 instead of 170
 
     # Convert back to degrees if needed
     if degrees:
@@ -43,7 +43,7 @@ def wrap_angle(angle,
 
     # Return same type as input
     if is_scalar:
-        return float(wrapped)
+        return float(wrapped) #one angle i/p- one float returned
     return wrapped
 
 def quat2euler(quat):
@@ -60,5 +60,5 @@ def quat2euler(quat):
     """
     from scipy.spatial.transform import Rotation as R
     
-    r = R.from_quat(quat)
-    return r.as_euler('xyz', degrees=False)
+    r = R.from_quat(quat) #rotation object created from quaternion
+    return r.as_euler('xyz', degrees=False) #converted quats into euler angles

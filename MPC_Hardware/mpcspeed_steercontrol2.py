@@ -14,7 +14,7 @@ import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
-from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
+from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, MAX_TIME
 
 #from utils.angle import angle_mod
 from .utils import wrap_angle
@@ -23,7 +23,7 @@ from .circular_path import calc_circle_course, demo_circle
 #from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 5  # horizon length
+T = 10  # horizon length
 
 # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
@@ -32,7 +32,7 @@ Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 GOAL_DIS = 1.5  # goal distance
 STOP_SPEED = 0.05  # stop speed
-MAX_TIME = 500.0  # max simulation time
+# MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
@@ -78,7 +78,7 @@ def get_linear_model_matrix(v, phi, delta):
     delta = float(np.clip(delta, -MAX_STEER, MAX_STEER))
 
     cd = math.cos(delta)
-    den = max(cd * cd, 1e-6)  # safety
+    den = max(cd * cd, 1e-6)  # safety 
 
     A = np.zeros((NX, NX))
     A[0, 0] = 1.0
@@ -184,21 +184,20 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     if oa is None or od is None:
         oa = [0.0] * T
         od = [0.0] * T
-
+    #if linear mpc fails it would still work
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, od, xref)
         poa, pod = oa[:], od[:]
-        # run one MPC iteration
+        #added-run one MPC iteration
         result = linear_mpc_control(xref, xbar, x0, dref)
         oa, od, ox, oy, oyaw, ov = result
-        # linear_mpc_control may return None if solver failed
+        #added
         if oa is None or od is None:
             # keep previous control sequence and abort further updates
-            print("Warning: linear_mpc_control failed on iteration", i, "status."
-                  " using previous oa/od and stopping iterative updates.")
+            print("MPC infeasible at iteration", i)
             oa, od = poa, pod
             break
-        # calculate input change; safe because both are numeric arrays/lists
+        # calculate input change(safe because both are numeric arrays/lists
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
             break

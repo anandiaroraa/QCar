@@ -13,7 +13,7 @@ from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
 #from scipy.spatial.transform import Rotation as R
 from .mpcspeed_steercontrol import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_nearest_index, calc_speed_profile, smooth_yaw
 
-from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
+from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, MAX_TIME, RADIUS, TARGET_SPEED, DS
 
 from .circular_path import calc_circle_course
 
@@ -120,8 +120,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     object_goal_pose = None
     #rate = Rate(1 / config.dt)
 
-    start_time = time.time()
-    max_time = 250
+    #start_time = time.time()
+    #max_time = 250
     #state_machine = ControlStateMachine(sim_env, objecta!")
 
     #car1_quat = [data.car1.x, data.car1.y, data.car1.quat[0], data.car1.quat[1], data.car1.quat[2], data.car1.quat[3]]
@@ -133,16 +133,16 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #car1_start_pose = np.array([car1_theta[0], car1_theta[1], car1_theta[2]])
     
 
-    print("Initial pose of car1:", data.car1.x, data.car1.y, data.car1.theta)
+    #print("Initial pose of car1:", data.car1.x, data.car1.y, data.car1.theta)
     
     #object_goal_pose = sim_env.object_goal_pose
     #object_goal_pose = np.array([0.5, 0.5])  # Placeholder goal pose; replace with sim_env.object_goal_pose when available
     #print("Object goal pose:", object_goal_pose)
-    object_goal_pose = None
+    #object_goal_pose = None
     #rate = Rate(1 / config.dt)
 
-    start_time = time.time()
-    max_time = 250
+    #start_time = time.time()
+    #max_time = 250
     #state_machine = ControlStateMachine(sim_env, object_goal_pose, at_pushing_pose, path_tracking_config)
     
     #while state_machine.state != REACHED_GOAL and time.time() - start_time < max_time:
@@ -171,24 +171,32 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     clockwise = bool(cfg.get("clockwise", False))
     #center_x = float(cfg.get("center_x", data.car1.x))
     #center_y = float(cfg.get("center_y", data.car1.y))
-    center_x = data.car1.x - radius * math.sin(data.car1.theta)
-    center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    center_x = data.car1.x + radius * math.sin(data.car1.theta)
+    center_y = data.car1.y - radius * math.cos(data.car1.theta)
     print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
-    target_speed = float(cfg.get("target_speed", 0.6))
+    target_speed = float(cfg.get("target_speed", MAX_SPEED))
 
     
     # Fallback circle waypoints (keeps shared.py light)
-    circumference = 2.0 * math.pi * radius
-    n_points = max(50, int(circumference / dl) + 1)
-    theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    # circumference = 2.0 * math.pi * radius
+    # n_points = max(50, int(circumference / dl) + 1)
+    # theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
 
-    cx = (center_x + radius * np.cos(theta)).tolist()
-    cy = (center_y + radius * np.sin(theta)).tolist()
-    cyaw = ((theta + (-math.pi / 2.0 if clockwise else math.pi / 2.0) + math.pi) % (2.0 * math.pi) - math.pi).tolist()
-    ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
+    # cx = (center_x + radius * np.cos(theta)).tolist()
+    # cy = (center_y + radius * np.sin(theta)).tolist()
+    # cyaw = ((theta + (-math.pi / 2.0 if clockwise else math.pi / 2.0) + math.pi) % (2.0 * math.pi) - math.pi).tolist()
+    # ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
     
+    # sp = calc_speed_profile(cx, cy, cyaw, target_speed)
+    # cyaw = smooth_yaw(cyaw)
+    #added for the trajectory
+    cx, cy, cyaw, ck, _ = calc_circle_course(
+        radius=radius, ds=dl,
+        center_x=center_x, center_y=center_y,
+        clockwise=clockwise
+    )
     sp = calc_speed_profile(cx, cy, cyaw, target_speed)
     cyaw = smooth_yaw(cyaw)
 
@@ -202,6 +210,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         cx, cy, cyaw, 0
     )
     oa, odelta = None, None
+    #added this
     data.car1.v = MIN_SPEED #starting should be a little warm
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
@@ -209,7 +218,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
-        #clamping the velocity
+        #added-clamping the velocity
         state = State(
         x=data.car1.x,
         y=data.car1.y,
@@ -278,11 +287,11 @@ if __name__ == "__main__":
         os.makedirs(results_dir, exist_ok=True)
         try:
             car1_hist, orig_path, exec_time, goal = run_car(test_case, True, path_tracking_config={
-                    "radius": 1.0,
-                    "ds": 0.05,
-                    "target_speed": 0.20,
+                    "radius": RADIUS,
+                    "ds": DS,
+                    "target_speed": TARGET_SPEED,
                     "clockwise": False,
-                    "max_time": 60.0,
+                    "max_time": MAX_TIME,
                 },)
             
             # Save this run immediately
@@ -292,7 +301,9 @@ if __name__ == "__main__":
                 original_path=np.array(orig_path) if orig_path is not None else np.array([]),
                 execution_time=exec_time,
                 object_goal_pose=goal,
-                run_number=0
+                run_number=0,
+                radius=RADIUS,
+                target_speed=TARGET_SPEED
             )
         except Exception as e:
             print(f"  ✗ Run failed with error: {e}")
