@@ -41,9 +41,11 @@ theta_circle = np.linspace(0, 2*math.pi, 200)
 ref_x = center_x + radius * np.cos(theta_circle)
 ref_y = center_y + radius * np.sin(theta_circle)
 
-# tracking error
-dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
-tracking_error = np.abs(dist_from_center - radius)
+# tracking error (nearest reference-point distance, same RMSE style as MPC sim)
+tracking_error = np.array([
+    np.min(np.hypot(ref_x - xi, ref_y - yi))
+    for xi, yi in zip(x, y)
+])
 
 # speed from pos
 dt = 0.1

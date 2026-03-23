@@ -23,22 +23,21 @@ from circular_path import calc_circle_course, demo_circle
 #from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 5  # horizon length
-
+T = 12  # horizon length
 # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q = np.diag([20.0, 20.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 1.5  # goal distance
-STOP_SPEED = 0.05  # stop speed
-MAX_TIME = 500.0  # max simulation time
+GOAL_DIS = 0.03  # goal distance
+STOP_SPEED = 0.00 # stop speed
+MAX_TIME = 60.0  # max simulation time
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
 DU_TH = 0.1  # iteration finish param
 
-TARGET_SPEED = 0.20 # [m/s] target  speed
+TARGET_SPEED = 0.15 # [m/s] target  speed
 
 N_IND_SEARCH = 10  # Search index number
 
@@ -51,7 +50,7 @@ WIDTH = 0.192  # [m]
 #TREAD = 0.7  # [m]
 
 
-show_animation = True  # simulation
+show_animation = False  # simulation
 
 
 class State:
@@ -59,7 +58,7 @@ class State:
     vehicle state class
     """
 
-    def __init__(self, x=0.0, y=0.0, yaw=0.0, v=0.0):
+    def __init__(self, x=0.0, y=0.0, yaw=0.0, v=0.10):
         self.x = x
         self.y = y
         self.yaw = yaw
@@ -124,10 +123,14 @@ def update_state(state, a, delta):
     state.yaw = state.yaw + state.v / WB * math.tan(delta) * DT
     state.v = state.v + a * DT
 
+    # If MIN_SPEED is configured positive (hardware setting), allow 0 in
+    # simulation so start/stop maneuvers remain feasible.
+    lower_speed = MIN_SPEED if MIN_SPEED < 0.0 else 0.0
+
     if state.v > MAX_SPEED:
         state.v = MAX_SPEED
-    elif state.v < MIN_SPEED:
-        state.v = MIN_SPEED
+    elif state.v < lower_speed:
+        state.v = lower_speed
 
     return state
 
@@ -189,6 +192,8 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
         xbar = predict_motion(x0, oa, od, xref)
         poa, pod = oa[:], od[:]
         oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
+        if oa is None or od is None:
+            return None, None, ox, oy, oyaw, ov
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
             break
@@ -233,7 +238,10 @@ def linear_mpc_control(xref, xbar, x0, dref):
 
     constraints += [x[:, 0] == x0]
     constraints += [x[2, :] <= MAX_SPEED]
-    constraints += [x[2, :] >= MIN_SPEED]
+    # Keep reverse capability if MIN_SPEED is negative, but allow 0 speed for
+    # simulation when MIN_SPEED is positive (hardware parameter set).
+    lower_speed = MIN_SPEED if MIN_SPEED < 0.0 else 0.0
+    constraints += [x[2, :] >= lower_speed]
     constraints += [cvxpy.abs(u[0, :]) <= MAX_ACCEL]
     constraints += [cvxpy.abs(u[1, :]) <= MAX_STEER]
 
@@ -249,7 +257,7 @@ def linear_mpc_control(xref, xbar, x0, dref):
         odelta = get_nparray_from_matrix(u.value[1, :])
 
     else:
-        print("Error: Cannot solve mpc..")
+        print(f"Error: Cannot solve mpc.. status={prob.status}")
         oa, odelta, ox, oy, oyaw, ov = None, None, None, None, None, None
 
     return oa, odelta, ox, oy, oyaw, ov
@@ -302,15 +310,10 @@ def check_goal(state, goal, tind, nind):
 
     isgoal = (d <= GOAL_DIS)
 
-    if abs(tind - nind) >= 5:
-        isgoal = False
+    # Only stop when we are also near the final path index.
+    is_near_last_index = tind >= max(0, nind - 2)
 
-    isstop = (abs(state.v) <= STOP_SPEED)
-
-    if isgoal and isstop:
-        return True
-
-    return False
+    return isgoal and is_near_last_index
 
 def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
     """
@@ -362,6 +365,11 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
         if odelta is not None:
             di, ai = odelta[0], oa[0]
             state = update_state(state, ai, di)
+        else:
+            # Debug: print when solver fails
+            if time < 2.0:  # Only print early failures
+                print(f"  t={time:.3f}: Solver returned None (infeasible)")
+
 
         time = time + DT
 
@@ -392,7 +400,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
             plt.axis("equal")
             plt.grid(True)
             plt.title("Time[s]:" + str(round(time, 2))
-                      + ", speed[km/h]:" + str(round(state.v * 3.6, 2)))
+                      + ", speed[m/s]:" + str(round(state.v, 2)))
             plt.pause(0.0001)
 
     return t, x, y, yaw, v, d, a
@@ -491,12 +499,21 @@ def get_switch_back_course(dl):
     return cx, cy, cyaw, ck
 '''
 
-def get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0, clockwise=False):
+def get_circle_course(dl, radius=1.0, center_x=0.0, center_y=0.0, clockwise=False):
     #dl as ds to keep naming consistent in your MPC pipeline
     cx, cy, cyaw, ck, s = calc_circle_course(
         radius=radius, ds=dl, center_x=center_x, center_y=center_y, clockwise=clockwise
     )
     return cx, cy, cyaw, ck
+
+
+def get_straight_course(dl, length=1.0, start_x=0.0, y=0.0):
+    n_points = max(2, int(round(length / dl)) + 1)
+    cx = np.linspace(start_x, start_x + length, n_points)
+    cy = np.full(n_points, y)
+    cyaw = np.zeros(n_points)
+    ck = np.zeros(n_points)
+    return cx.tolist(), cy.tolist(), cyaw.tolist(), ck.tolist()
 
 """
 def get_lemniscate_course(dl, a=2.0):
@@ -522,36 +539,53 @@ def main():
     start = time.time()
 
     dl = 0.1
-    cx, cy, cyaw, ck = get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0)
+    trajectories = [
+        ("circle", get_circle_course(dl, radius=1.0, center_x=0.0, center_y=0.0)),
+        ("straight", get_straight_course(dl, length=1.0, start_x=0.0, y=0.0)),
+    ]
 
-    sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
+    for name, (cx, cy, cyaw, ck) in trajectories:
+        print(f"\n=== trajectory: {name} ===")
+        run_start = time.time()
 
-    initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
+        sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
+        initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
 
-    t, x, y, yaw, v, d, a = do_simulation(
-        cx, cy, cyaw, ck, sp, dl, initial_state)
+        t, x, y, yaw, v, d, a = do_simulation(
+            cx, cy, cyaw, ck, sp, dl, initial_state)
+        print(f"{name} tracking rmse:{np.sqrt(np.mean([min((xi - cxi) ** 2 + (yi - cyi) ** 2 for cxi, cyi in zip(cx, cy)) for xi, yi in zip(x, y)])):.4f} [m]")
 
-    elapsed_time = time.time() - start
-    print(f"calc time:{elapsed_time:.6f} [sec]")
+        elapsed_time = time.time() - run_start
+        print(f"calc time:{elapsed_time:.6f} [sec]")
 
-    if show_animation:  # pragma: no cover
-        plt.close("all")
-        plt.subplots()
-        plt.plot(cx, cy, "-r", label="spline")
-        plt.plot(x, y, "-g", label="tracking")
-        plt.grid(True)
-        plt.axis("equal")
-        plt.xlabel("x[m]")
-        plt.ylabel("y[m]")
-        plt.legend()
+        if show_animation:  # pragma: no cover
+            plt.close("all")
+            plt.subplots()
+            plt.plot(cx, cy, "-r", label="reference")
+            plt.plot(x, y, "-g", label="tracking")
+            plt.grid(True)
+            plt.axis("equal")
+            plt.xlabel("x[m]")
+            plt.ylabel("y[m]")
+            plt.title(f"Trajectory: {name}")
+            plt.legend()
 
-        plt.subplots()
-        plt.plot(t, v, "-r", label="speed")
-        plt.grid(True)
-        plt.xlabel("Time [s]")
-        plt.ylabel("Speed [kmh]")
+            v_arr = np.array(v)
+            plt.subplots()
+            plt.plot(t, v_arr, "-r", label="actual speed")
+            plt.axhline(TARGET_SPEED, color="k", linestyle="--", label="target speed")
+            plt.axhline(MAX_SPEED, color="b", linestyle=":", label="max speed")
+            plt.grid(True)
+            plt.xlabel("Time [s]")
+            plt.ylabel("Speed [m/s]")
+            y_max = max(np.max(v_arr), TARGET_SPEED, MAX_SPEED) * 1.15
+            plt.ylim(0.0, max(0.05, y_max))
+            plt.title(f"Speed profile: {name}")
+            plt.legend()
 
-        plt.show()
+            plt.show()
+
+    print(f"\ntotal runtime:{time.time() - start:.6f} [sec]")
 
 '''
 def main2():
