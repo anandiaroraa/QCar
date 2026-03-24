@@ -11,7 +11,7 @@ import numpy as np
 import rospy
 from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
 #from scipy.spatial.transform import Rotation as R
-from .mpcspeed_steercontrol import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_nearest_index, calc_speed_profile, smooth_yaw
+from .mpcspeed_steercontrol2 import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_nearest_index, calc_speed_profile, smooth_yaw
 
 from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, MAX_TIME, RADIUS, TARGET_SPEED, DS
 
@@ -282,9 +282,23 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #     print("Hardware experiment timed out.")
     # else:
     #     print(f"Hardware experiment completed in {execution_time:.2f} seconds")
-    
-    # ADD: Return collected data
-    return car1_history, original_path, execution_time, object_goal_pose
+    #tune
+    reference_path = {
+        "reference_x": np.array(cx),
+        "reference_y": np.array(cy),
+        "reference_yaw": np.array(cyaw),
+        "reference_curvature": np.array(ck),
+        "center_x": center_x,
+        "center_y": center_y,
+        "radius": radius,
+        "target_speed": target_speed,
+        "ds": dl,
+        "clockwise": clockwise,
+        "max_time": max_time,
+    }
+
+    # ADD: Return collected data #tune
+    return car1_history, original_path, execution_time, object_goal_pose, reference_path
 
 if __name__ == "__main__":
     import os    
@@ -296,7 +310,7 @@ if __name__ == "__main__":
         results_dir = f'hardware_results_test{test_case}'
         os.makedirs(results_dir, exist_ok=True)
         try:
-            car1_hist, orig_path, exec_time, goal = run_car(test_case, True, path_tracking_config={
+            car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={ #tune
                     "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
@@ -312,8 +326,18 @@ if __name__ == "__main__":
                 execution_time=exec_time,
                 object_goal_pose=goal,
                 run_number=0,
-                radius=RADIUS,
-                target_speed=TARGET_SPEED
+                #tune
+                radius=reference_path["radius"],
+                target_speed=reference_path["target_speed"],
+                center_x=reference_path["center_x"],
+                center_y=reference_path["center_y"],
+                ds=reference_path["ds"],
+                clockwise=reference_path["clockwise"],
+                max_time=reference_path["max_time"],
+                reference_x=reference_path["reference_x"],
+                reference_y=reference_path["reference_y"],
+                reference_yaw=reference_path["reference_yaw"],
+                reference_curvature=reference_path["reference_curvature"],
             )
         except Exception as e:
             print(f"  ✗ Run failed with error: {e}")

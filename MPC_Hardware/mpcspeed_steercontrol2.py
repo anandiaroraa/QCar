@@ -14,39 +14,31 @@ import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
-from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, MAX_TIME
+from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
 
 #from utils.angle import angle_mod
 from .utils import wrap_angle
 #from PathPlanning.CubicSpline import cubic_spline_planner 
 from .circular_path import calc_circle_course, demo_circle
-#from lemniscate import generate_lemniscate, compute_yaw, compute_curvature
+
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
 T = 5  # horizon length
 
-# # mpc parameters
+# mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 GOAL_DIS = 1.0  # goal distance
-#STOP_SPEED = 0.05  # stop speed
-# MAX_TIME = 500.0  # max simulation time
-
-# #mpc tuning
-# R = np.diag([0.01, 0.01])  # input cost matrix
-# Rd = np.diag([0.01, 2.0])  # input difference cost matrix
-# Q = np.diag([2.0, 2.0, 0.5, 1.0])  # state cost matrix
-# Qf = Q  # state final matrix
-# GOAL_DIS = 1.0  # goal distance
-# STOP_SPEED = 0.05  # stop speed
+STOP_SPEED = 0.05  # stop speed
+MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
 DU_TH = 0.1  # iteration finish param
 
-TARGET_SPEED = 0.20 # [m/s] target  speed
+TARGET_SPEED = 0.15 # [m/s] target  speed
 
 N_IND_SEARCH = 10  # Search index number
 
@@ -78,15 +70,15 @@ def pi_2_pi(angle):
     return wrap_angle(angle)
 
 def get_linear_model_matrix(v, phi, delta):
+    #tune
+    # #added
+    # # 1) Keep angles sane
+    # phi = (phi + np.pi) % (2 * np.pi) - np.pi
+    # # 2) Clamp steering to avoid cos(delta)^2 blowing up
+    # delta = float(np.clip(delta, -MAX_STEER, MAX_STEER))
 
-    #added
-    # 1) Keep angles sane
-    phi = (phi + np.pi) % (2 * np.pi) - np.pi
-    # 2) Clamp steering to avoid cos(delta)^2 blowing up
-    delta = float(np.clip(delta, -MAX_STEER, MAX_STEER))
-
-    cd = math.cos(delta)
-    den = max(cd * cd, 1e-6)  # safety 
+    # cd = math.cos(delta)
+    # den = max(cd * cd, 1e-6)  # safety 
 
     A = np.zeros((NX, NX))
     A[0, 0] = 1.0
@@ -508,39 +500,34 @@ def get_switch_back_course(dl):
 
     return cx, cy, cyaw, ck
 '''
+#tune
+# def get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0, clockwise=False):
+#     #dl as ds to keep naming consistent in your MPC pipeline
+#     cx, cy, cyaw, ck, s = calc_circle_course(
+#         radius=radius, ds=dl, center_x=center_x, center_y=center_y, clockwise=clockwise
+#     )
+#     return cx, cy, cyaw, ck
 
-def get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0, clockwise=False):
-    #dl as ds to keep naming consistent in your MPC pipeline
-    cx, cy, cyaw, ck, s = calc_circle_course(
-        radius=radius, ds=dl, center_x=center_x, center_y=center_y, clockwise=clockwise
-    )
+def get_circular_course(dl, radius=1.0):
+    circumference = 2.0 * math.pi * radius
+    n_points = max(int(circumference / dl), 20)
+
+    theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    cx = (radius * np.cos(theta)).tolist()
+    cy = (radius * np.sin(theta)).tolist()
+
+    # Yaw is tangent to the circle for counterclockwise motion.
+    cyaw = (theta + math.pi / 2.0).tolist()
+    ck = [1.0 / radius] * len(cx)
+
     return cx, cy, cyaw, ck
 
-"""
-def get_lemniscate_course(dl, a=2.0):
-    cx, cy = generate_lemniscate(a=a)
-    cyaw = compute_yaw(cx, cy)
-    ck = compute_curvature(cx, cy)
-
-    # Resample to have points at approximately dl distance
-    distance = np.cumsum(np.sqrt(np.diff(cx)**2 + np.diff(cy)**2))
-    distance = np.insert(distance, 0, 0)  # insert starting point
-    total_length = distance[-1]
-    num_points = int(total_length / dl)
-
-    resampled_cx = np.interp(np.linspace(0, total_length, num_points), distance, cx)
-    resampled_cy = np.interp(np.linspace(0, total_length, num_points), distance, cy)
-    resampled_cyaw = np.interp(np.linspace(0, total_length, num_points), distance, cyaw)
-    resampled_ck = np.interp(np.linspace(0, total_length, num_points), distance, ck)
-
-    return resampled_cx.tolist(), resampled_cy.tolist(), resampled_cyaw.tolist(), resampled_ck.tolist()
-"""
 def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 0.1
-    cx, cy, cyaw, ck = get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0)
+    dl = 1.0
+    cx, cy, cyaw, ck = get_circular_course(dl, radius=1.0)
 
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 

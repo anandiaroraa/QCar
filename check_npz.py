@@ -81,25 +81,8 @@ axs[1].legend()
 axs[1].grid(True)
 
 params_text = (
-    f"--- Run Params ---\n"
-    f"Radius: {radius:.2f} m\n"
-    f"Target speed: {target_speed:.3f} m/s\n"
-    f"MAX_SPEED: {MAX_SPEED:.3f} m/s\n"
-    f"MIN_SPEED: {MIN_SPEED:.3f} m/s\n"
-    f"MAX_STEER: {np.rad2deg(MAX_STEER):.1f} deg\n"
-    f"T (horizon): {T}\n"
-    f"Q: {np.diag(Q).tolist()}\n"
-    f"Rd: {np.diag(Rd).tolist()}\n"
-    f"R: {np.diag(R).tolist()}\n"
-    f"--- Metrics ---\n"
-    f"Points: {len(x)}\n"
-    f"Duration: {timestamp[-1] - timestamp[0]:.2f} s\n"
-    f"Mean error: {tracking_error.mean():.4f} m\n"
     f"RMSE: {np.sqrt(np.mean(tracking_error**2)):.4f} m\n"
-    f"Max error: {tracking_error.max():.4f} m\n"
-    f"Std error: {tracking_error.std():.4f} m\n"
-    f"Mean speed (cmd): {speed_cmd.mean():.3f} m/s\n"
-    f"Mean speed (est): {speed_est.mean():.3f} m/s"
+    
 )
 
 fig.text(0.02, 0.5, params_text, fontsize=8,
@@ -114,4 +97,15 @@ base_name = os.path.splitext(latest)[0]
 save_path = base_name + '_plot.png'
 plt.savefig(save_path)
 plt.show()
-print(f"\nSaved to {save_path}")
+
+# Print metrics once
+rmse = np.sqrt(np.mean(tracking_error**2))
+max_error = tracking_error.max()
+min_error = tracking_error.min()
+total_time = timestamp[-1] - timestamp[0]
+print(f"\n--- Tracking Error Metrics ---")
+print(f"RMSE: {rmse:.4f} m")
+print(f"Max:  {max_error:.4f} m")
+print(f"Min:  {min_error:.4f} m")
+print(f"Duration: {total_time:.2f} s")
+print(f"Saved to {save_path}")
