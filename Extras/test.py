@@ -1,9 +1,9 @@
 # create a test_waypoints.py file
 import math
 import numpy as np
-from .circular_path import calc_circle_course
-from .mpcspeed_steercontrol import calc_speed_profile, smooth_yaw
-from .qcar_params import MAX_SPEED, DS, RADIUS
+from .MPC_Hardware.trajectory import calc_circle_course
+from .MPC_Hardware.mpcspeed_steercontrol import calc_speed_profile, smooth_yaw
+from .MPC_Hardware.qcar_params import MAX_SPEED, DS, RADIUS
 
 # simulate car start pose
 car_x, car_y, car_theta = 0.249, 0.006, -0.004

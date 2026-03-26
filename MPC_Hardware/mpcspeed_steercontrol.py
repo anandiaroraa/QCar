@@ -12,14 +12,16 @@ import math
 import numpy as np
 import sys
 import pathlib
+
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
-from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB
+from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, MAX_TIME, DS, LENGTH
 
 #from utils.angle import angle_mod
-from .utils import wrap_angle
+from .utils import angle_mod
 #from PathPlanning.CubicSpline import cubic_spline_planner 
-from .circular_path import calc_circle_course, demo_circle
+from .trajectory import get_trajectory, calc_circle_course
+# from .cubic_spline_plannar import calc_spline_course
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
@@ -30,26 +32,32 @@ R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 1.0  # goal distance
-STOP_SPEED = 0.05  # stop speed
-MAX_TIME = 500.0  # max simulation time
+# GOAL_DIS = 1.0  # goal distance
+# STOP_SPEED = 0.05  # stop speed
+# MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
 DU_TH = 0.1  # iteration finish param
 
-TARGET_SPEED = 0.15 # [m/s] target  speed
+TARGET_SPEED = TARGET_SPEED # [m/s] target  speed
 
 N_IND_SEARCH = 10  # Search index number
-
+DT = DT
 # Vehicle parameters
-LENGTH = 0.425  # [m]
+VEHICLE_LENGTH = 0.425  # [m]
 WIDTH = 0.192  # [m]
 #BACKTOWHEEL = 1.0  # [m]
 #WHEEL_LEN = 0.3  # [m]
 #WHEEL_WIDTH = 0.2  # [m]
 #TREAD = 0.7  # [m]
+WB = WB  # [m] Wheel base
 
+MAX_STEER = MAX_STEER # maximum steering angle [rad]
+MAX_DSTEER = MAX_DSTEER # maximum steering speed [rad/s]
+MAX_SPEED = MAX_SPEED  # maximum speed [m/s]
+MIN_SPEED = MIN_SPEED # minimum speed [m/s]
+MAX_ACCEL = MAX_ACCEL
 
 show_animation = False  # simulation
 
@@ -67,18 +75,9 @@ class State:
         self.predelta = None
 
 def pi_2_pi(angle):
-    return wrap_angle(angle)
+    return angle_mod(angle)
 
 def get_linear_model_matrix(v, phi, delta):
-    #tune
-    # #added
-    # # 1) Keep angles sane
-    # phi = (phi + np.pi) % (2 * np.pi) - np.pi
-    # # 2) Clamp steering to avoid cos(delta)^2 blowing up
-    # delta = float(np.clip(delta, -MAX_STEER, MAX_STEER))
-
-    # cd = math.cos(delta)
-    # den = max(cd * cd, 1e-6)  # safety 
 
     A = np.zeros((NX, NX))
     A[0, 0] = 1.0
@@ -188,15 +187,15 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, od, xref)
         poa, pod = oa[:], od[:]
-        #added-run one MPC iteration
-        result = linear_mpc_control(xref, xbar, x0, dref)
-        oa, od, ox, oy, oyaw, ov = result
+        # #added-run one MPC iteration
+        # result = linear_mpc_control(xref, xbar, x0, dref)
+        oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
         #added
-        if oa is None or od is None:
-            # keep previous control sequence and abort further updates
-            print("MPC infeasible at iteration", i)
-            oa, od = poa, pod
-            break
+        # if oa is None or od is None:
+        #     # keep previous control sequence and abort further updates
+        #     print("MPC infeasible at iteration", i)
+        #     oa, od = poa, pod
+        #     break
         # calculate input change(safe because both are numeric arrays/lists
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
@@ -259,7 +258,7 @@ def linear_mpc_control(xref, xbar, x0, dref):
 
     else:
         # include solver status for debugging
-        print(f"Error: Cannot solve mpc (status={prob.status}).")
+        print(f"Error: Cannot solve mpc..")
         oa, odelta, ox, oy, oyaw, ov = None, None, None, None, None, None
 
     return oa, odelta, ox, oy, oyaw, ov
@@ -527,13 +526,34 @@ def main():
     start = time.time()
 
     dl = 1.0
-    cx, cy, cyaw, ck = get_circular_course(dl, radius=1.0)
+    
+    #SWITCH TRAJECTORY
+    trajectory_type = "circle"  # ← Change to "straight" for straight line 
+    
+    if trajectory_type == "circle":
+        cx, cy, cyaw, ck, s = get_trajectory(
+            "circle",
+            radius=RADIUS,
+            ds=dl,
+            center_x=0.0,
+            center_y=0.0,
+            clockwise=False
+        )
+    else:  # straight
+        cx, cy, cyaw, ck, s = get_trajectory(
+            "straight",
+            length=LENGTH,
+            ds=dl,
+            start_x=0.0,
+            start_y=0.0,
+            angle=0.0
+        )
 
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
 
-
+    print("Trajectory loaded, ready for hardware control")
 
     elapsed_time = time.time() - start
     print(f"calc time:{elapsed_time:.6f} [sec]")

@@ -11,11 +11,11 @@ import numpy as np
 import rospy
 from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
 #from scipy.spatial.transform import Rotation as R
-from .mpcspeed_steercontrol2 import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_nearest_index, calc_speed_profile, smooth_yaw
+from .mpcspeed_steercontrol import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_speed_profile, smooth_yaw
 
-from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, MAX_TIME, RADIUS, TARGET_SPEED, DS
+from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, DS, LENGTH
 
-from .circular_path import calc_circle_course
+from .trajectory import get_trajectory
 
 from geometry_msgs.msg import(
     PoseStamped,
@@ -23,7 +23,7 @@ from geometry_msgs.msg import(
 #from nav_msgs.msg import Path
 #import rospy
 
-REACHED_GOAL = 8
+#REACHED_GOAL = 8
 
 class _Pose():
     def __init__(self):
@@ -65,7 +65,7 @@ class Data():
         self.car1._last_y = self.car1.y
         self.car1._last_t = now
 
-#changed the func run_carpool_simulation to run_car
+#changed the func name run_carpool_simulation to run_car
 def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #sim_env = PushingAmongObstaclesEnv(test_case=test_case)
     #rospy.init_node("qcar_ros", anonymous=True)
@@ -166,7 +166,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         
     #added my mpc
     cfg = path_tracking_config or {}
-    radius = float(cfg.get("radius", 1.0))
+    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
+    radius = float(cfg.get("radius", RADIUS))
     dl = float(cfg.get("ds", 0.05))
     clockwise = bool(cfg.get("clockwise", False))
     #center_x = float(cfg.get("center_x", data.car1.x))
@@ -176,27 +177,33 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
-    target_speed = float(cfg.get("target_speed", MAX_SPEED))
-
+    if trajectory_type == "circle":
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "circle",
+            radius=radius,
+            ds=dl,
+            center_x=center_x,
+            center_y=center_y,
+            clockwise=clockwise
+        )
+    else:  # straight
+        straight_length = float(cfg.get("length", LENGTH))
+        start_angle = data.car1.theta
+        print(f"Straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
+        
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "straight",
+            length=straight_length,
+            ds=dl,
+            start_x=data.car1.x,
+            start_y=data.car1.y,
+            angle=start_angle
+        )
+        center_x = data.car1.x
+        center_y = data.car1.y
     
-    # Fallback circle waypoints (keeps shared.py light)
-    # circumference = 2.0 * math.pi * radius
-    # n_points = max(50, int(circumference / dl) + 1)
-    # theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
-    # cx = (center_x + radius * np.cos(theta)).tolist()
-    # cy = (center_y + radius * np.sin(theta)).tolist()
-    # cyaw = ((theta + (-math.pi / 2.0 if clockwise else math.pi / 2.0) + math.pi) % (2.0 * math.pi) - math.pi).tolist()
-    # ck = (np.full(n_points, (-1.0 / radius) if clockwise else (1.0 / radius))).tolist()
-    
-    # sp = calc_speed_profile(cx, cy, cyaw, target_speed)
-    # cyaw = smooth_yaw(cyaw)
-    #added for the trajectory
-    cx, cy, cyaw, ck, _ = calc_circle_course(
-        radius=radius, ds=dl,
-        center_x=center_x, center_y=center_y,
-        clockwise=clockwise
-    )
     sp = calc_speed_profile(cx, cy, cyaw, target_speed)
     cyaw = smooth_yaw(cyaw)
 
@@ -291,7 +298,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         "center_x": center_x,
         "center_y": center_y,
         "radius": radius,
-        "target_speed": target_speed,
+        "target_speed": TARGET_SPEED,
         "ds": dl,
         "clockwise": clockwise,
         "max_time": max_time,
@@ -307,16 +314,19 @@ if __name__ == "__main__":
     
     # Create directory for results
     for test_case in test_cases:
-        results_dir = f'hardware_results_test{test_case}'
+        results_dir = f'hardware_results_test{test_case}' #change to hardware_results_test_straight
         os.makedirs(results_dir, exist_ok=True)
         try:
-            car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={ #tune
+            #SWITCH TRAJECTORY 
+            car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
+                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
                     "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
                     "clockwise": False,
                     "max_time": MAX_TIME,
-                },)
+                    "length": LENGTH,  # For straight trajectory
+                })
             
             # Save this run immediately
             np.savez_compressed(
