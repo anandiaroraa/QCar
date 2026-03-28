@@ -168,12 +168,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     cfg = path_tracking_config or {}
     trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
     radius = float(cfg.get("radius", RADIUS))
-    dl = float(cfg.get("ds", 0.05))
-    clockwise = bool(cfg.get("clockwise", False))
-    #center_x = float(cfg.get("center_x", data.car1.x))
-    #center_y = float(cfg.get("center_y", data.car1.y))
-    center_x = data.car1.x - radius * math.sin(data.car1.theta)
-    center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    dl = float(cfg.get("ds", DS))
+    # center_x = float(cfg.get("center_x", data.car1.x))
+    # center_y = float(cfg.get("center_y", data.car1.y))
+    clockwise = bool(cfg.get("clockwise", True))
+
+    if clockwise:
+        center_x = data.car1.x + radius * math.sin(data.car1.theta)
+        center_y = data.car1.y - radius * math.cos(data.car1.theta)
+    else:
+        center_x = data.car1.x - radius * math.sin(data.car1.theta)
+        center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    #center_x = data.car1.x - radius * math.sin(data.car1.theta)
+    #center_y = data.car1.y + radius * math.cos(data.car1.theta)
     print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
@@ -204,7 +211,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
-    sp = calc_speed_profile(cx, cy, cyaw, target_speed)
+    sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
     cyaw = smooth_yaw(cyaw)
 
     start_time = time.time()
@@ -323,7 +330,7 @@ if __name__ == "__main__":
                     "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
-                    "clockwise": False,
+                    "clockwise": True,
                     "max_time": MAX_TIME,
                     "length": LENGTH,  # For straight trajectory
                 })

@@ -130,7 +130,9 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     
     #while state_machine.state != REACHED_GOAL and time.time() - start_time < max_time:
         #state_machine.update_poses(data=data)
-        #action = state_machine.execute()
+        #action = state_machincenter_x = data.car1.x + radius * math.sin(data.car1.theta) 
+
+center_y = data.car1.y - radius * math.cos(data.car1.theta)e.execute()
         
         # ADD: Record pose history (after update_poses)
         #car1_history.append(state_machine.car1_pose.copy())
@@ -151,9 +153,16 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     cfg = path_tracking_config or {}
     radius = float(cfg.get("radius", 1.5))
     dl = float(cfg.get("ds", 0.05))
-    clockwise = bool(cfg.get("clockwise", False))
-    center_x = float(cfg.get("center_x", 0.0))
-    center_y = float(cfg.get("center_y", 0.0))
+    # center_x = float(cfg.get("center_x", 0.0))
+    # center_y = float(cfg.get("center_y", 0.0))
+    clockwise = bool(cfg.get("clockwise", True))
+
+    if clockwise:
+        center_x = data.car1.x + radius * math.sin(data.car1.theta)
+        center_y = data.car1.y - radius * math.cos(data.car1.theta)
+    else:
+        center_x = data.car1.x - radius * math.sin(data.car1.theta)
+        center_y = data.car1.y + radius * math.cos(data.car1.theta)
     target_speed = float(cfg.get("target_speed", 0.6))
 
     # Fallback circle waypoints (keeps shared.py light)

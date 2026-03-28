@@ -28,7 +28,7 @@ NU = 2  # a = [accel, steer]
 T = 5  # horizon length
 
 # mpc parameters
-R = np.diag([0.01, 0.01])  # input cost matrix
+R = np.diag([0.15, 0.1])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
@@ -183,20 +183,15 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     if oa is None or od is None:
         oa = [0.0] * T
         od = [0.0] * T
-    #if linear mpc fails it would still work
+ 
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, od, xref)
         poa, pod = oa[:], od[:]
-        # #added-run one MPC iteration
-        # result = linear_mpc_control(xref, xbar, x0, dref)
+        
         oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
         #added
         # if oa is None or od is None:
-        #     # keep previous control sequence and abort further updates
-        #     print("MPC infeasible at iteration", i)
-        #     oa, od = poa, pod
-        #     break
-        # calculate input change(safe because both are numeric arrays/lists
+        #     return None, None, ox, oy, oyaw, ov
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
             break

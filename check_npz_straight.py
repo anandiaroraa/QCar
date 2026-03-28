@@ -8,7 +8,7 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, script_dir)
 
-from mpc_hardware.qcar_params import (
+from MPC_Hardware.qcar_params import (
     MAX_SPEED,
     MIN_SPEED,
     MAX_STEER,
@@ -66,18 +66,8 @@ s_ref = np.linspace(s_min, s_max, 200)
 ref_x = start_x + s_ref * dir_x
 ref_y = start_y + s_ref * dir_y
 
-# Speed estimate from position and timestamp.
-pos_dx = np.diff(x)
-pos_dy = np.diff(y)
+# Sample timing (used for steer-rate calculation).
 dt_samples = np.diff(timestamp)
-speed_est = np.divide(
-    np.hypot(pos_dx, pos_dy),
-    dt_samples,
-    out=np.zeros_like(dt_samples),
-    where=dt_samples > 0,
-)
-speed_est = np.clip(speed_est, 0.0, MAX_SPEED * 3)
-avg_speed = float(np.mean(speed_est))
 
 target_speed = float(d['target_speed']) if 'target_speed' in d else TARGET_SPEED
 
@@ -101,12 +91,11 @@ axs[0].grid(True)
 
 # Speed profile
 t_rel = timestamp - timestamp[0]
-axs[1].plot(t_rel[1:], speed_est, 'b-', label='Estimated speed')
+axs[1].plot(t_rel, v, 'b-', label='Actual speed')
 axs[1].plot(t_rel, speed_cmd, 'r-', label='Commanded speed')
 axs[1].axhline(y=MAX_SPEED, color='g', linestyle='-', label='MAX_SPEED')
 axs[1].axhline(y=MIN_SPEED, color='orange', linestyle='-', label='MIN_SPEED')
 axs[1].axhline(y=target_speed, color='purple', linestyle='-', label='Target speed')
-axs[1].axhline(y=avg_speed, color='black', linestyle='--', label='Average speed')
 axs[1].set_xlabel('Time (s)')
 axs[1].set_ylabel('Speed (m/s)')
 axs[1].set_title('Speed Profile')
@@ -145,9 +134,11 @@ axs[3].grid(True)
 
 plt.tight_layout()
 
-# Save next to npz
-base_name = os.path.splitext(latest)[0]
-save_path = base_name + '_plot.png'
+# Save in Tuning_straight folder with npz-based name
+output_dir = os.path.join(script_dir, 'Tuning_straight')
+os.makedirs(output_dir, exist_ok=True)
+base_name = os.path.splitext(os.path.basename(latest))[0]
+save_path = os.path.join(output_dir, base_name + '_plot.png')
 plt.savefig(save_path)
 plt.show()
 
@@ -157,11 +148,15 @@ mean_error = tracking_error.mean()
 max_error = tracking_error.max()
 min_error = tracking_error.min()
 total_time = timestamp[-1] - timestamp[0]
+avg_speed_cmd = np.mean(speed_cmd)
+avg_speed_actual = np.mean(np.abs(v))
 
-print("\n--- Tracking Error Metrics (Straight Line) ---")
+
 print(f"RMSE: {rmse:.4f} m")
 print(f"Mean: {mean_error:.4f} m")
 print(f"Max:  {max_error:.4f} m")
 print(f"Min:  {min_error:.4f} m")
 print(f"Duration: {total_time:.2f} s")
+print(f"Avg commanded speed: {avg_speed_cmd:.4f} m/s")
+print(f"Avg actual speed (v from OptiTrack): {avg_speed_actual:.4f} m/s")
 print(f"Saved to {save_path}")
