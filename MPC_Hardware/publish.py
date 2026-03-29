@@ -50,7 +50,8 @@ class Data():
         pose = msg.pose.position
         orientation = msg.pose.orientation
         self.car1.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
-        self.car1.theta = float(quat2euler([orientation.w, orientation.x,orientation.y,orientation.z])[2])
+        # quat to euler uses x y z w
+        self.car1.theta = float(quat2euler([self.car1.quat[1], self.car1.quat[2], self.car1.quat[3], self.car1.quat[0]])[2])
         self.car1.x = pose.y
         self.car1.y = pose.x
         #added mark received + estimate speed
@@ -212,7 +213,16 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
     sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
-    cyaw = smooth_yaw(cyaw)
+    # cyaw = smooth_yaw(cyaw)
+    # wrap cyaw to [-pi, pi)
+    # cyaw = (cyaw + np.pi) % (2 * np.pi) - np.pi
+
+    print("Generated reference trajectory points (index, xref, yref, yawref, kref, vref):")
+    for i in range(len(cx)):
+        print(
+            f"  ref[{i:03d}] xref={float(cx[i]):.3f}, yref={float(cy[i]):.3f}, "
+            f"yawref={float(cyaw[i]):.3f}, kref={float(ck[i]):.4f}, vref={float(sp[i]):.3f}"
+        )
 
     start_time = time.time()
     max_time = float(cfg.get("max_time", 250.0))
@@ -250,7 +260,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
         )
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
+        x_ref_now = float(xref[0, 0])
+        y_ref_now = float(xref[1, 0])
+        cyaw_ref_now = float(xref[3, 0])
+        v_ref_now = float(xref[2, 0])
+        horizon_xy = ", ".join([
+            f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
+            for j in range(xref.shape[1])
+        ])
+        print(f"xref/yref horizon: {horizon_xy}")
+        print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
+
         x0 = [state.x, state.y, state.v, state.yaw]
+        
 
         oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
 

@@ -5,32 +5,33 @@ Path tracking simulation with iterative linear model predictive control for spee
 author: Atsushi Sakai (@Atsushi_twi)
 
 """
-#import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt 
 import time
 import cvxpy
 import math
 import numpy as np
 import sys
 import pathlib
+import pdb
 
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
 from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, MAX_TIME, DS, LENGTH
 
 #from utils.angle import angle_mod
-from .utils import angle_mod
+# from .utils import angle_mod
 #from PathPlanning.CubicSpline import cubic_spline_planner 
 from .trajectory import get_trajectory, calc_circle_course
 # from .cubic_spline_plannar import calc_spline_course
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 5  # horizon length
+T = 3  # horizon length
 
 # mpc parameters
-R = np.diag([0.15, 0.1])  # input cost matrix
-Rd = np.diag([0.01, 1.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+R = np.diag([0.001, 0.001])  # input cost matrix
+Rd = np.diag([0.01, 1])  # input difference cost matrix
+Q = np.diag([0.16, 0.16, 0.1, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 # GOAL_DIS = 1.0  # goal distance
 # STOP_SPEED = 0.05  # stop speed
@@ -42,7 +43,7 @@ DU_TH = 0.1  # iteration finish param
 
 TARGET_SPEED = TARGET_SPEED # [m/s] target  speed
 
-N_IND_SEARCH = 10  # Search index number
+N_IND_SEARCH = 5  # Search index number
 DT = DT
 # Vehicle parameters
 VEHICLE_LENGTH = 0.425  # [m]
@@ -75,7 +76,7 @@ class State:
         self.predelta = None
 
 def pi_2_pi(angle):
-    return angle_mod(angle)
+    return (angle + math.pi) % (2 * math.pi) - math.pi
 
 def get_linear_model_matrix(v, phi, delta):
 
@@ -520,7 +521,7 @@ def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 1.0
+    dl = 0.1
     
     #SWITCH TRAJECTORY
     trajectory_type = "circle"  # ← Change to "straight" for straight line 
@@ -543,7 +544,37 @@ def main():
             start_y=0.0,
             angle=0.0
         )
+    
 
+    # 
+    cyaw = [- math.pi + i for i in cyaw] # TODO: Do this using rotation matrix
+    cyaw = smooth_yaw(cyaw)
+
+    # wrap yaw to [-pi, pi)
+    cyaw = (np.array(cyaw) + np.pi) % (2 * np.pi) - np.pi
+    assert abs(cyaw).max() <= math.pi and abs(cyaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
+    # plot reference trajectory
+    show_animation = True
+    
+    if show_animation:  # pragma: no cover
+        
+        # plt.close("all")
+        # plt.subplots()
+        plt.plot(cx, cy, "-r", label="reference")
+        # plot yaw as arrows
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
+        # label with yaw angle in radians
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
+        plt.grid(True)
+        plt.axis("equal")
+        plt.xlabel("x[m]")
+        plt.ylabel("y[m]")
+        plt.legend()
+        plt.title("Reference Trajectory")
+        plt.show()
+    pdb.set_trace()
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
@@ -611,6 +642,6 @@ def main2():
     '''
 
 if __name__ == '__main__':
-    pass
-    #main()
+    # pass
+    main()
     # main2()

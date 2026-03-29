@@ -1,7 +1,57 @@
 import numpy as np
 import math
-from .utils import angle_mod
+# from .utils import angle_mod
 from .qcar_params import RADIUS, LENGTH, DS
+import matplotlib.pyplot as plt
+
+def plot_trajectory(rx, ry, ryaw=None, title="Reference Trajectory", show_points=True):
+    """
+    Quick visual check for generated trajectory.
+
+    Args:
+        rx, ry: trajectory x/y points
+        ryaw: optional yaw array for heading arrows
+        title: plot title
+        show_points: scatter all points if True
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib is not installed; skipping trajectory plot.")
+        return
+
+    rx_arr = np.asarray(rx)
+    ry_arr = np.asarray(ry)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.plot(rx_arr, ry_arr, "b-", linewidth=2.0, label="reference")
+    if show_points:
+        ax.scatter(rx_arr, ry_arr, s=14, c="tab:orange", label="waypoints")
+
+    if ryaw is not None and len(ryaw) == len(rx_arr):
+        step = max(1, len(rx_arr) // 25)
+        yaw_arr = np.asarray(ryaw)
+        ax.quiver(
+            rx_arr[::step],
+            ry_arr[::step],
+            np.cos(yaw_arr[::step]),
+            np.sin(yaw_arr[::step]),
+            angles="xy",
+            scale_units="xy",
+            scale=8.0,
+            width=0.003,
+            color="tab:green",
+            label="heading"
+        )
+
+    ax.set_title(title)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.grid(True)
+    ax.axis("equal")
+    ax.legend(loc="best")
+    plt.tight_layout()
+    plt.show()
 
 def calc_straight_course(length=LENGTH, ds=DS, start_x=0.0, start_y=0.0, angle=0.0):
     """
@@ -72,15 +122,17 @@ def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, clockwi
     # Yaw = tangent direction
     # CCW: theta + pi/2, CW: theta - pi/2
     if clockwise:
-        ryaw = theta - math.pi / 2.0
+        ryaw = theta + math.pi / 2.0
         curvature = -1.0 / radius
     else:
-        ryaw = theta + math.pi / 2.0
+        ryaw = theta - math.pi / 2.0
         curvature = 1.0 / radius
 
     # Wrap yaw to [-pi, pi)
-    ryaw = np.array([angle_mod(a) for a in ryaw])
-
+    # ryaw = np.array([angle_mod(a) for a in ryaw])
+    # (angle + np.pi) % (2 * np.pi) - np.pi
+    ryaw = (ryaw + np.pi) % (2 * np.pi) - np.pi
+    assert abs(ryaw).max() <= math.pi and abs(ryaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
     # Curvature constant
     rk = np.full(n_points, curvature)
 
@@ -116,7 +168,7 @@ def get_trajectory(trajectory_type="circle", **kwargs):
         rx, ry, ryaw, rk, s: Lists of x, y, yaw, curvature, arc length
     """
     if trajectory_type.lower() == "circle":
-        return calc_circle_course(
+        rx, ry, ryaw, rk, s = calc_circle_course(
             radius=kwargs.get("radius", RADIUS),
             ds=kwargs.get("ds", DS),
             center_x=kwargs.get("center_x", 0.0),
@@ -124,7 +176,7 @@ def get_trajectory(trajectory_type="circle", **kwargs):
             clockwise=kwargs.get("clockwise", False)
         )
     elif trajectory_type.lower() == "straight":
-        return calc_straight_course(
+        rx, ry, ryaw, rk, s = calc_straight_course(
             length=kwargs.get("length", LENGTH),
             ds=kwargs.get("ds", DS),
             start_x=kwargs.get("start_x", 0.0),
@@ -133,3 +185,33 @@ def get_trajectory(trajectory_type="circle", **kwargs):
         )
     else:
         raise ValueError(f"Unknown trajectory_type: {trajectory_type}. Use 'circle' or 'straight'")
+
+    if kwargs.get("debug_plot", False):
+        plot_title = kwargs.get("plot_title", f"{trajectory_type.capitalize()} trajectory")
+        plot_trajectory(rx, ry, ryaw=ryaw, title=plot_title, show_points=True)
+
+    return rx, ry, ryaw, rk, s
+
+if __name__ == "__main__":
+    # Example usage
+    circle_rx, circle_ry, circle_ryaw, circle_rk, circle_s = get_trajectory(
+        trajectory_type="circle",
+        radius=RADIUS,
+        ds=DS,
+        center_x=0.0,
+        center_y=0.0,
+        clockwise=False,
+        debug_plot=True,
+        plot_title="Generated Circle Trajectory"
+    )
+
+    straight_rx, straight_ry, straight_ryaw, straight_rk, straight_s = get_trajectory(
+        trajectory_type="straight",
+        length=LENGTH,
+        ds=DS,
+        start_x=0.0,
+        start_y=0.0,
+        angle=math.radians(30),  # 30 degree heading
+        debug_plot=True,
+        plot_title="Generated Straight Trajectory"
+    )
