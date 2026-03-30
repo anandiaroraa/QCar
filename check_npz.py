@@ -65,9 +65,26 @@ actual_wp_y = y[::actual_wp_step]
 # Calculate tracking error as distance from actual trajectory to nearest reference waypoint
 dists = np.sqrt((x[:, np.newaxis] - wp_x[np.newaxis, :]) ** 2 + (y[:, np.newaxis] - wp_y[np.newaxis, :]) ** 2)
 tracking_error = np.min(dists, axis=1)
+nearest_ref_idx = np.argmin(dists, axis=1)
+
+# Per-timestep reference values (nearest waypoint to each measured sample)
+xref_t = wp_x[nearest_ref_idx]
+yref_t = wp_y[nearest_ref_idx]
+
+if 'reference_yaw' in d:
+    wp_yaw = np.asarray(d['reference_yaw']).reshape(-1)
+    if len(wp_yaw) != len(wp_x):
+        wp_yaw = np.pad(wp_yaw, (0, max(0, len(wp_x) - len(wp_yaw))), mode='edge')[:len(wp_x)]
+else:
+    dx_wp = np.gradient(wp_x)
+    dy_wp = np.gradient(wp_y)
+    wp_yaw = np.arctan2(dy_wp, dx_wp)
+
+yawref_t = wp_yaw[nearest_ref_idx]
 
 # sample timing (used for steer-rate calculation)
 dt_samples = np.diff(timestamp)
+t_rel = timestamp - timestamp[0]
 
 # steer-following check: compare measured yaw-rate vs yaw-rate predicted from steer command
 yaw_unwrapped = np.unwrap(yaw)
@@ -80,59 +97,59 @@ yaw_rate_actual = np.divide(
 yaw_rate_pred = (v[:-1] / WB) * np.tan(steer[:-1])
 
 # plt
-fig, axs = plt.subplots(1, 4, figsize=(24, 5))
+fig, axs = plt.subplots(1, 1, figsize=(6, 5))
 
 # path tracking (left)
-axs[0].plot(ref_y, ref_x, 'r--', label='Reference')
-axs[0].plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
-axs[0].plot(y, x, 'b-', label='Actual')
-axs[0].plot(actual_wp_y, actual_wp_x, 'c*', markersize=5, label='Actual waypoints')
-axs[0].plot(y[0], x[0], 'go', markersize=10, label='Start')
-axs[0].plot(y[-1], x[-1], 'rs', markersize=10, label='End')
-axs[0].set_title(f'Path Tracking (radius={radius}m)\nRMSE={np.sqrt(np.mean(tracking_error**2)):.3f}m  Mean={tracking_error.mean():.3f}m  Max={tracking_error.max():.3f}m')
-axs[0].legend()
-axs[0].axis('equal')
-axs[0].grid(True)
+axs.plot(ref_y, ref_x, 'r--', label='Reference')
+axs.plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
+axs.plot(y, x, 'b-', label='Actual')
+axs.plot(actual_wp_y, actual_wp_x, 'c*', markersize=5, label='Actual waypoints')
+axs.plot(y[0], x[0], 'go', markersize=10, label='Start')
+axs.plot(y[-1], x[-1], 'rs', markersize=10, label='End')
+axs.set_title(f'Path Tracking (radius={radius}m)\nRMSE={np.sqrt(np.mean(tracking_error**2)):.3f}m  Mean={tracking_error.mean():.3f}m  Max={tracking_error.max():.3f}m')
+axs.legend()
+axs.axis('equal')
+axs.grid(True)
 
-# speed over time (right)
-t_rel = timestamp - timestamp[0]
-axs[1].plot(t_rel, v, 'b-', label='Actual speed')
-axs[1].plot(t_rel, speed_cmd, 'r-', label='Commanded speed')
-axs[1].axhline(y=MAX_SPEED, color='g', linestyle='-', label='MAX_SPEED')
-axs[1].axhline(y=MIN_SPEED, color='orange', linestyle='-', label='MIN_SPEED')
-axs[1].axhline(y=TARGET_SPEED, color='purple', linestyle='-', label='Target speed')
-axs[1].set_xlabel('Time (s)')
-axs[1].set_ylabel('Speed (m/s)')
-axs[1].set_title('Speed Profile')
-axs[1].legend()
-axs[1].grid(True)
+# # speed over time (right)
+# t_rel = timestamp - timestamp[0]
+# axs[1].plot(t_rel, v, 'b-', label='Actual speed')
+# axs[1].plot(t_rel, speed_cmd, 'r-', label='Commanded speed')
+# axs[1].axhline(y=MAX_SPEED, color='g', linestyle='-', label='MAX_SPEED')
+# axs[1].axhline(y=MIN_SPEED, color='orange', linestyle='-', label='MIN_SPEED')
+# axs[1].axhline(y=TARGET_SPEED, color='purple', linestyle='-', label='Target speed')
+# axs[1].set_xlabel('Time (s)')
+# axs[1].set_ylabel('Speed (m/s)')
+# axs[1].set_title('Speed Profile')
+# axs[1].legend()
+# axs[1].grid(True)
 
-# steering angle over time (far right)
-steer_deg = np.degrees(steer)
-max_steer_deg = np.degrees(MAX_STEER)
-axs[2].plot(t_rel, steer_deg, 'm-', label='Steer angle')
-axs[2].axhline(y=max_steer_deg, color='k', linestyle='--', label='+MAX_STEER')
-axs[2].axhline(y=-max_steer_deg, color='k', linestyle='--', label='-MAX_STEER')
-axs[2].set_xlabel('Time (s)')
-axs[2].set_ylabel('Steering Angle (deg)')
-axs[2].set_title('Steering Profile')
-axs[2].legend()
-axs[2].grid(True)
+# # steering angle over time (far right)
+# steer_deg = np.degrees(steer)
+# max_steer_deg = np.degrees(MAX_STEER)
+# axs[2].plot(t_rel, steer_deg, 'm-', label='Steer angle')
+# axs[2].axhline(y=max_steer_deg, color='k', linestyle='--', label='+MAX_STEER')
+# axs[2].axhline(y=-max_steer_deg, color='k', linestyle='--', label='-MAX_STEER')
+# axs[2].set_xlabel('Time (s)')
+# axs[2].set_ylabel('Steering Angle (deg)')
+# axs[2].set_title('Steering Profile')
+# axs[2].legend()
+# axs[2].grid(True)
 
-# steering rate over time
-dsteer = np.divide(np.diff(steer), dt_samples, out=np.zeros_like(dt_samples), where=dt_samples > 0)
-dsteer_deg = np.degrees(dsteer)
-max_dsteer_deg = np.degrees(MAX_DSTEER)
-axs[3].plot(t_rel[1:], np.degrees(yaw_rate_actual), 'c-', label='Yaw rate (measured)')
-axs[3].plot(t_rel[1:], np.degrees(yaw_rate_pred), 'm--', label='Yaw rate (pred from steer)')
-axs[3].plot(t_rel[1:], dsteer_deg, color='0.6', linestyle=':', label='Steer rate')
-axs[3].axhline(y=max_dsteer_deg, color='k', linestyle='--', label='+MAX_DSTEER')
-axs[3].axhline(y=-max_dsteer_deg, color='k', linestyle='--', label='-MAX_DSTEER')
-axs[3].set_xlabel('Time (s)')
-axs[3].set_ylabel('Rate (deg/s)')
-axs[3].set_title('Yaw-Rate Consistency Check')
-axs[3].legend()
-axs[3].grid(True)
+# # steering rate over time
+# dsteer = np.divide(np.diff(steer), dt_samples, out=np.zeros_like(dt_samples), where=dt_samples > 0)
+# dsteer_deg = np.degrees(dsteer)
+# max_dsteer_deg = np.degrees(MAX_DSTEER)
+# axs[3].plot(t_rel[1:], np.degrees(yaw_rate_actual), 'c-', label='Yaw rate (measured)')
+# axs[3].plot(t_rel[1:], np.degrees(yaw_rate_pred), 'm--', label='Yaw rate (pred from steer)')
+# axs[3].plot(t_rel[1:], dsteer_deg, color='0.6', linestyle=':', label='Steer rate')
+# axs[3].axhline(y=max_dsteer_deg, color='k', linestyle='--', label='+MAX_DSTEER')
+# axs[3].axhline(y=-max_dsteer_deg, color='k', linestyle='--', label='-MAX_DSTEER')
+# axs[3].set_xlabel('Time (s)')
+# axs[3].set_ylabel('Rate (deg/s)')
+# axs[3].set_title('Yaw-Rate Consistency Check')
+# axs[3].legend()
+# axs[3].grid(True)
 
 
 plt.subplots_adjust(left=0.22)
@@ -144,6 +161,39 @@ os.makedirs(tuning_dir, exist_ok=True)
 base_name = os.path.splitext(os.path.basename(latest))[0]
 save_path = os.path.join(tuning_dir, f'{base_name}_plot.png')
 plt.savefig(save_path)
+plt.show()
+
+# Time-series comparison: x/xref, y/yref, yaw/yawref
+yaw_unwrapped_ts = np.unwrap(yaw)
+yawref_unwrapped_ts = np.unwrap(yawref_t)
+
+fig2, axs2 = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+
+axs2[0].plot(t_rel, x, 'b-', label='x')
+axs2[0].plot(t_rel, xref_t, 'r--', label='xref')
+axs2[0].set_ylabel('x [m]')
+axs2[0].set_title('x vs xref')
+axs2[0].grid(True)
+axs2[0].legend()
+
+axs2[1].plot(t_rel, y, 'b-', label='y')
+axs2[1].plot(t_rel, yref_t, 'r--', label='yref')
+axs2[1].set_ylabel('y [m]')
+axs2[1].set_title('y vs yref')
+axs2[1].grid(True)
+axs2[1].legend()
+
+axs2[2].plot(t_rel, (yaw_unwrapped_ts), 'b-', label='yaw')
+axs2[2].plot(t_rel, (yawref_unwrapped_ts), 'r--', label='yawref')
+axs2[2].set_ylabel('yaw [deg]')
+axs2[2].set_xlabel('Time [s]')
+axs2[2].set_title('yaw vs yawref')
+axs2[2].grid(True)
+axs2[2].legend()
+
+plt.tight_layout()
+save_path_state = os.path.join(tuning_dir, f'{base_name}_state_vs_ref.png')
+plt.savefig(save_path_state)
 plt.show()
 
 # Print metrics once
@@ -174,3 +224,4 @@ print(f"Yaw-rate RMSE (actual vs pred from steer): {yaw_rate_rmse_deg:.2f} deg/s
 print(f"Yaw-rate MAE  (actual vs pred from steer): {yaw_rate_mae_deg:.2f} deg/s")
 print(f"Yaw-rate correlation: {yaw_rate_corr:.3f}")
 print(f"Saved to {save_path}")
+print(f"Saved to {save_path_state}")

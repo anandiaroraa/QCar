@@ -5,7 +5,7 @@ import math
 #from ..utils.load_config import multi_agent_config as config
 #from ..utils.rate_for_simulation import Rate
 #from ..utils.angle_utils import quat2euler_single as quat2euler
-from .utils import quat2euler
+from .utils import quat2euler, wrap_angle
 #from ..controllers.state_machine_controller_hardware import ControlStateMachine
 import numpy as np
 import rospy
@@ -51,9 +51,20 @@ class Data():
         orientation = msg.pose.orientation
         self.car1.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
         # quat to euler uses x y z w
-        self.car1.theta = float(quat2euler([self.car1.quat[1], self.car1.quat[2], self.car1.quat[3], self.car1.quat[0]])[2])
+        theta_world = float(quat2euler([self.car1.quat[1], self.car1.quat[2], self.car1.quat[3], self.car1.quat[0]])[2])
+        # self.car1.theta = wrap_angle(theta_world - math.pi/2.0)
+        #rotation by -90 deg
         self.car1.x = pose.y
-        self.car1.y = pose.x
+        self.car1.y = -pose.x
+        self.car1.theta = wrap_angle(theta_world)
+        #debug prints for pose updates
+        if not hasattr(self, "_dbg_count"):
+            self._dbg_count = 0
+        self._dbg_count += 1
+        if self._dbg_count % 10 == 0:
+            print(f"world: x={pose.x:.3f}, y={pose.y:.3f}, theta_world={theta_world:.3f}")
+            print(f"traj : x={self.car1.x:.3f}, y={self.car1.y:.3f}, theta={self.car1.theta:.3f}")
+
         #added mark received + estimate speed
         self.car1.received = True
         now = time.time()
@@ -67,6 +78,22 @@ class Data():
         self.car1._last_t = now
 
 #changed the func name run_carpool_simulation to run_car
+def make_straight_waypoints(start_x, start_y, start_yaw, length=0.5, ds=0.02):
+    n_pts = int(length / ds) + 1
+
+    cx = []
+    cy = []
+    cyaw = []
+    ck = []
+
+    for i in range(n_pts):
+        s = i * ds
+        cx.append(start_x + s * math.cos(start_yaw))
+        cy.append(start_y + s * math.sin(start_yaw))
+        cyaw.append(start_yaw)
+        ck.append(0.0)
+
+    return np.array(cx), np.array(cy), np.array(cyaw), np.array(ck)
 def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #sim_env = PushingAmongObstaclesEnv(test_case=test_case)
     #rospy.init_node("qcar_ros", anonymous=True)
@@ -165,57 +192,87 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         
         #rate.sleep()
         
-    #added my mpc
-    cfg = path_tracking_config or {}
-    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
-    radius = float(cfg.get("radius", RADIUS))
-    dl = float(cfg.get("ds", DS))
-    # center_x = float(cfg.get("center_x", data.car1.x))
-    # center_y = float(cfg.get("center_y", data.car1.y))
-    clockwise = bool(cfg.get("clockwise", True))
+    #added my mpc-oldtraj
+    # cfg = path_tracking_config or {}
+    # trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
+    # radius = float(cfg.get("radius", RADIUS))
+    # dl = float(cfg.get("ds", DS))
+    # # center_x = float(cfg.get("center_x", data.car1.x))
+    # # center_y = float(cfg.get("center_y", data.car1.y))
+    # clockwise = bool(cfg.get("clockwise", True))
 
-    if clockwise:
-        center_x = data.car1.x + radius * math.sin(data.car1.theta)
-        center_y = data.car1.y - radius * math.cos(data.car1.theta)
-    else:
-        center_x = data.car1.x - radius * math.sin(data.car1.theta)
-        center_y = data.car1.y + radius * math.cos(data.car1.theta)
-    #center_x = data.car1.x - radius * math.sin(data.car1.theta)
-    #center_y = data.car1.y + radius * math.cos(data.car1.theta)
-    print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
-    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
-
-    if trajectory_type == "circle":
-        cx, cy, cyaw, ck, _ = get_trajectory(
-            "circle",
-            radius=radius,
-            ds=dl,
-            center_x=center_x,
-            center_y=center_y,
-            clockwise=clockwise
-        )
-    else:  # straight
-        straight_length = float(cfg.get("length", LENGTH))
-        start_angle = data.car1.theta
-        print(f"Straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
+    # if clockwise:
+    #     center_x = data.car1.x + radius * math.sin(data.car1.theta)
+    #     center_y = data.car1.y - radius * math.cos(data.car1.theta)
+    # else:
+    #     center_x = data.car1.x - radius * math.sin(data.car1.theta)
+    #     center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    # #center_x = data.car1.x - radius * math.sin(data.car1.theta)
+    # #center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    # print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
+    # print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
+    # print(f"START POSE used for path generation: x={data.car1.x:.3f}, y={data.car1.y:.3f}, theta={data.car1.theta:.3f}")
+    # if trajectory_type == "circle":
+    #     cx, cy, cyaw, ck, _ = get_trajectory(
+    #         "circle",
+    #         radius=radius,
+    #         ds=dl,
+    #         center_x=center_x,
+    #         center_y=center_y,
+    #         clockwise=clockwise
+    #     )
+    # else:  # straight
+    #     straight_length = float(cfg.get("length", LENGTH))
+    #     start_angle = data.car1.theta
+    #     print(f"Straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
         
-        cx, cy, cyaw, ck, _ = get_trajectory(
-            "straight",
-            length=straight_length,
-            ds=dl,
-            start_x=data.car1.x,
-            start_y=data.car1.y,
-            angle=start_angle
-        )
-        center_x = data.car1.x
-        center_y = data.car1.y
+    #     cx, cy, cyaw, ck, _ = get_trajectory(
+    #         "straight",
+    #         length=straight_length,
+    #         ds=dl,
+    #         start_x=data.car1.x,
+    #         start_y=data.car1.y,
+    #         angle=start_angle
+    #     )
+    #     center_x = data.car1.x
+    #     center_y = data.car1.y
     
-    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
+    # print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
 
-    sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
+    # sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
+
     # cyaw = smooth_yaw(cyaw)
     # wrap cyaw to [-pi, pi)
     # cyaw = (cyaw + np.pi) % (2 * np.pi) - np.pi
+
+    #hardcoded straight line
+    cfg = path_tracking_config or {}
+    dl = float(cfg.get("ds", 0.02))
+    straight_length = float(cfg.get("length", 0.5))
+
+    print(f"START POSE used for path generation: x={data.car1.x:.3f}, y={data.car1.y:.3f}, theta={data.car1.theta:.3f}")
+
+    start_x = data.car1.x
+    start_y = data.car1.y
+    start_angle = data.car1.theta
+
+    cx, cy, cyaw, ck = make_straight_waypoints(
+        start_x=start_x,
+        start_y=start_y,
+        start_yaw=start_angle,
+        length=straight_length,
+        ds=dl
+    )
+
+    center_x = start_x
+    center_y = start_y
+    radius = 0.0
+    clockwise = False
+
+    print(f"Hardcoded straight line: length={straight_length:.3f} m, ds={dl:.3f}")
+    print(f"Line start = ({start_x:.3f}, {start_y:.3f}), yaw = {start_angle:.3f}")
+
+    sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
 
     print("Generated reference trajectory points (index, xref, yref, yawref, kref, vref):")
     for i in range(len(cx)):
@@ -248,7 +305,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     data.car1.v = MIN_SPEED #starting should be a little warm
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
-    print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
+    #print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
+    print(f"DEBUG: Straight line start = ({center_x:.3f}, {center_y:.3f})")
 
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
@@ -348,8 +406,8 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
-                    "radius": RADIUS,
+                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
+                    # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
                     "clockwise": True,
