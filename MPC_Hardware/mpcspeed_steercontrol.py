@@ -26,12 +26,12 @@ from .trajectory import get_trajectory, calc_circle_course
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 5  # horizon length
+T = 3  # horizon length
 
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 1])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.1, 0.5])  # state cost matrix
+Q = np.diag([0.16, 0.16, 0.1, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 # GOAL_DIS = 1.0  # goal distance
 # STOP_SPEED = 0.05  # stop speed
@@ -524,7 +524,7 @@ def main():
     dl = 0.1
     
     #SWITCH TRAJECTORY
-    trajectory_type = "straight"  # ← Change to "straight" for straight line 
+    trajectory_type = "circle"  # ← Change to "straight" for straight line 
     
     if trajectory_type == "circle":
         cx, cy, cyaw, ck, s = get_trajectory(

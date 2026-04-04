@@ -11,4 +11,4 @@ RADIUS     = 0.8   #[m] circle radius
 LENGTH     = 2.0  #[m] straight line length
 TARGET_SPEED = 0.09
 MAX_TIME   = 15.0 #change this during experiments
-DS         = 0.02
+DS         = 1.0
