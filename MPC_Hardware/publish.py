@@ -15,6 +15,17 @@ from .mpcspeed_steercontrol import State, calc_ref_trajectory, iterative_linear_
 
 from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, DS, LENGTH
 
+from geometry_msgs.msg import(
+    PoseStamped,
+)
+#from nav_msgs.msg import Path
+#import rospy
+
+#REACHED_GOAL = 8
+
+class _Pose():
+    def __init__(self):
+        self.reset()
 from .trajectory import get_trajectory
 
 from geometry_msgs.msg import(
@@ -60,8 +71,8 @@ class Data():
         self.car1.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
         # quat to euler uses x y z w
         self.car1.theta = float(quat2euler([self.car1.quat[1], self.car1.quat[2], self.car1.quat[3], self.car1.quat[0]])[2])
-        self.car1.x = pose.y
-        self.car1.y = pose.x
+        self.car1.x = pose.x
+        self.car1.y = pose.y
         #added mark received + estimate speed
         self.car1.received = True
         now = time.time()
@@ -86,6 +97,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     rospy.sleep(1)
     
     give_command1 = rospy.Publisher("/qcar/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
+    ref_pose_pub = rospy.Publisher("/mpc/reference_pose", PoseStamped, queue_size=1)
 
     car1_history = []
 
@@ -273,6 +285,22 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         y_ref_now = float(xref[1, 0])
         cyaw_ref_now = float(xref[3, 0])
         v_ref_now = float(xref[2, 0])
+        
+
+
+        ############################### debug print statements ###############################
+        ref_pose_msg = PoseStamped()
+        ref_pose_msg.header.stamp = rospy.Time.now()
+        ref_pose_msg.header.frame_id = "map"
+        ref_pose_msg.pose.position.x = x_ref_now
+        ref_pose_msg.pose.position.y = y_ref_now
+        ref_pose_msg.pose.position.z = 0.0
+        ref_pose_msg.pose.orientation.x = 0.0
+        ref_pose_msg.pose.orientation.y = 0.0
+        ref_pose_msg.pose.orientation.z = math.sin(cyaw_ref_now * 0.5)
+        ref_pose_msg.pose.orientation.w = math.cos(cyaw_ref_now * 0.5)
+        ref_pose_pub.publish(ref_pose_msg)
+
         horizon_xy = ", ".join([
             f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
             for j in range(xref.shape[1])
@@ -289,7 +317,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             steer1, speed1 = 0.0, 0.0
         else:
             a_cmd = float(oa[0])                  # accel output
-            steer1 = float(odelta[0])             # steer output
+            # steer1 = float(odelta[0])            # steer output
+            steer1 = np.deg2rad (-8.0)
             speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
 
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
@@ -357,7 +386,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
+                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,

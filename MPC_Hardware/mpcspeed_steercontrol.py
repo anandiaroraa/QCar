@@ -31,7 +31,7 @@ T = 3  # horizon length
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 1])  # input difference cost matrix
-Q = np.diag([0.16, 0.16, 0.1, 0.5])  # state cost matrix
+Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 # GOAL_DIS = 1.0  # goal distance
 # STOP_SPEED = 0.05  # stop speed
@@ -521,7 +521,7 @@ def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 0.1
+    dl = 1.0
     
     #SWITCH TRAJECTORY
     trajectory_type = "circle"  # ← Change to "straight" for straight line 
@@ -547,34 +547,34 @@ def main():
     
 
     # 
-    cyaw = [- math.pi + i for i in cyaw] # TODO: Do this using rotation matrix
-    cyaw = smooth_yaw(cyaw)
+    # cyaw = [- math.pi + i for i in cyaw] # TODO: Do this using rotation matrix
+    # cyaw = smooth_yaw(cyaw)
 
-    # wrap yaw to [-pi, pi)
-    cyaw = (np.array(cyaw) + np.pi) % (2 * np.pi) - np.pi
-    assert abs(cyaw).max() <= math.pi and abs(cyaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
-    # plot reference trajectory
-    show_animation = True
+    # # wrap yaw to [-pi, pi)
+    # cyaw = (np.array(cyaw) + np.pi) % (2 * np.pi) - np.pi
+    # assert abs(cyaw).max() <= math.pi and abs(cyaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
+    # # plot reference trajectory
+    # show_animation = True
     
-    if show_animation:  # pragma: no cover
+    # if show_animation:  # pragma: no cover
         
-        # plt.close("all")
-        # plt.subplots()
-        plt.plot(cx, cy, "-r", label="reference")
-        # plot yaw as arrows
-        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-            plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
-        # label with yaw angle in radians
-        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-            plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
-        plt.grid(True)
-        plt.axis("equal")
-        plt.xlabel("x[m]")
-        plt.ylabel("y[m]")
-        plt.legend()
-        plt.title("Reference Trajectory")
-        plt.show()
-    pdb.set_trace()
+    #     # plt.close("all")
+    #     # plt.subplots()
+    #     plt.plot(cx, cy, "-r", label="reference")
+    #     # plot yaw as arrows
+    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+    #         plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
+    #     # label with yaw angle in radians
+    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+    #         plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
+    #     plt.grid(True)
+    #     plt.axis("equal")
+    #     plt.xlabel("x[m]")
+    #     plt.ylabel("y[m]")
+    #     plt.legend()
+    #     plt.title("Reference Trajectory")
+    #     plt.show()
+    # pdb.set_trace()
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)

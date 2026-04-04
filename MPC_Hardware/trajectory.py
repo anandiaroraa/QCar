@@ -82,7 +82,8 @@ def calc_straight_course(length=LENGTH, ds=DS, start_x=0.0, start_y=0.0, angle=0
     ry = start_y + s * np.sin(angle)
     
     # Yaw constant (heading angle)
-    ryaw = np.full(n_points, angle_mod(angle))
+    # ryaw = np.full(n_points, angle_mod(angle))
+    ryaw = np.full(n_points, (angle + np.pi) % (2 * np.pi) - np.pi)
     
     # Curvature = 0 (straight line)
     rk = np.zeros(n_points)

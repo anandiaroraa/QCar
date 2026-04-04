@@ -48,7 +48,7 @@ theta_circle = np.linspace(0, 2*math.pi, 200)
 ref_x = center_x + radius * np.cos(theta_circle)
 ref_y = center_y + radius * np.sin(theta_circle)
 
-# logged MPC waypoints, if available
+# logged MPC waypoints, if available maximum steering rate[rad/s]#not turn too suddenly
 if 'reference_x' in d and 'reference_y' in d:
     wp_x = np.asarray(d['reference_x']).reshape(-1)
     wp_y = np.asarray(d['reference_y']).reshape(-1)
@@ -84,16 +84,16 @@ yaw_rate_pred = (v[:-1] / WB) * np.tan(steer[:-1])
 fig, axs = plt.subplots(1, 4, figsize=(24, 5))
 
 # path tracking (left)
-axs.plot(ref_y, ref_x, 'r--', label='Reference')
-axs.plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
-axs.plot(y, x, 'b-', label='Actual')
-axs.plot(actual_wp_y, actual_wp_x, 'c*', markersize=5, label='Actual waypoints')
-axs.plot(y[0], x[0], 'go', markersize=10, label='Start')
-axs.plot(y[-1], x[-1], 'rs', markersize=10, label='End')
-axs.set_title(f'Path Tracking (radius={radius}m)\nRMSE={np.sqrt(np.mean(tracking_error**2)):.3f}m  Mean={tracking_error.mean():.3f}m  Max={tracking_error.max():.3f}m')
-axs.legend()
-axs.axis('equal')
-axs.grid(True)
+axs[0].plot(ref_y, ref_x, 'r--', label='Reference')
+axs[0].plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
+axs[0].plot(y, x, 'b-', label='Actual')
+axs[0].plot(actual_wp_y, actual_wp_x, 'c*', markersize=5, label='Actual waypoints')
+axs[0].plot(y[0], x[0], 'go', markersize=10, label='Start')
+axs[0].plot(y[-1], x[-1], 'rs', markersize=10, label='End')
+axs[0].set_title(f'Path Tracking (radius={radius}m)\nRMSE={np.sqrt(np.mean(tracking_error**2)):.3f}m  Mean={tracking_error.mean():.3f}m  Max={tracking_error.max():.3f}m')
+axs[0].legend()
+axs[0].axis('equal')
+axs[0].grid(True)
 
 # # speed over time (right)
 t_rel = timestamp - timestamp[0]
