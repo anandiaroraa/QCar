@@ -26,11 +26,11 @@ from .trajectory import get_trajectory, calc_circle_course
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 3  # horizon length
+T = 11  # horizon length
 
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
-Rd = np.diag([0.01, 1])  # input difference cost matrix
+Rd = np.diag([0.01, 2.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 # GOAL_DIS = 1.0  # goal distance

@@ -214,6 +214,21 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             center_y=center_y,
             clockwise=clockwise
         )
+        #rotate the circle waypoints so waypoint 0 is closest to the car's start position
+        min_dist = float('inf')
+        start_idx = 0
+        for i in range(len(cx)):
+            d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+            if d < min_dist:
+                min_dist = d
+                start_idx = i
+
+        cx   = np.roll(cx,   -start_idx).tolist()
+        cy   = np.roll(cy,   -start_idx).tolist()
+        cyaw = np.roll(cyaw, -start_idx).tolist()
+        ck   = np.roll(ck,   -start_idx).tolist()
+
+        target_ind = 0  # now always starts at 0
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
         start_angle = data.car1.theta
@@ -256,13 +271,14 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     # )
     #so that the mpc starts with the nearest waypoint
     target_ind = 0
-    min_dist = float('inf')
-    for i in range(len(cx)):
-        d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
-        if d < min_dist:
-            min_dist = d
-            target_ind = i
-    print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
+    # min_dist = float('inf')
+    # for i in range(len(cx)):
+    #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+    #     if d < min_dist:
+    #         min_dist = d
+    #         target_ind = i
+    # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
+    print(f"target_ind at start: {target_ind}")
 
     oa, odelta = None, None
     #added this
@@ -317,8 +333,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             steer1, speed1 = 0.0, 0.0
         else:
             a_cmd = float(oa[0])                  # accel output
-            # steer1 = float(odelta[0])            # steer output
-            steer1 = np.deg2rad (-8.0)
+            steer1 = float(odelta[0])            # steer output
+            #steer1 = np.deg2rad (-8.0)
             speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
 
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))

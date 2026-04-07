@@ -65,6 +65,13 @@ s_ref = np.linspace(s_min, s_max, 200)
 ref_x = start_x + s_ref * dir_x
 ref_y = start_y + s_ref * dir_y
 
+if 'reference_x' in d and 'reference_y' in d:
+    wp_x = np.asarray(d['reference_x']).reshape(-1)
+    wp_y = np.asarray(d['reference_y']).reshape(-1)
+else:
+    wp_x = ref_x
+    wp_y = ref_y
+
 # Sample timing (used for steer-rate calculation).
 dt_samples = np.diff(timestamp)
 target_speed = float(d['target_speed']) if 'target_speed' in d else TARGET_SPEED
@@ -74,6 +81,7 @@ fig, axs = plt.subplots(1, 4, figsize=(24, 5))
 
 # Path tracking
 axs[0].plot(ref_y, ref_x, 'r--', label='Reference (Straight)')
+axs[0].plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
 axs[0].plot(y, x, 'b-', label='Actual')
 axs[0].plot(y[0], x[0], 'go', markersize=10, label='Start')
 axs[0].plot(y[-1], x[-1], 'rs', markersize=10, label='End')
