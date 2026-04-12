@@ -80,15 +80,16 @@ target_speed = float(d['target_speed']) if 'target_speed' in d else TARGET_SPEED
 fig, axs = plt.subplots(1, 4, figsize=(24, 5))
 
 # Path tracking
-axs[0].plot(ref_y, ref_x, 'r--', label='Reference (Straight)')
-axs[0].plot(wp_y, wp_x, 'y*', markersize=6, label='Reference waypoints')
-axs[0].plot(y, x, 'b-', label='Actual')
-axs[0].plot(y[0], x[0], 'go', markersize=10, label='Start')
-axs[0].plot(y[-1], x[-1], 'rs', markersize=10, label='End')
+axs[0].plot(ref_x, ref_y, 'r--', label='Reference (Straight)')
+axs[0].plot(wp_x, wp_y, 'y*', markersize=6, label='Reference waypoints')
+axs[0].plot(x, y, 'b-', label='Actual')
+axs[0].plot(x[0], y[0], 'go', markersize=10, label='Start')
+axs[0].plot(x[-1], y[-1], 'rs', markersize=10, label='End')
 axs[0].set_title(
     f'Straight-Line Tracking\n'
     f'RMSE={np.sqrt(np.mean(tracking_error**2)):.3f}m  '
     f'Mean={tracking_error.mean():.3f}m  '
+    f'Std={tracking_error.std():.3f}m  '
     f'Max={tracking_error.max():.3f}m'
 )
 axs[0].legend()
@@ -150,6 +151,7 @@ plt.show()
 #metrics
 rmse = np.sqrt(np.mean(tracking_error**2))
 mean_error = tracking_error.mean()
+std_error = tracking_error.std()
 max_error = tracking_error.max()
 min_error = tracking_error.min()
 total_time = timestamp[-1] - timestamp[0]
@@ -158,9 +160,12 @@ avg_speed_actual = np.mean(np.abs(v))
 
 print(f"RMSE: {rmse:.4f} m")
 print(f"Mean: {mean_error:.4f} m")
+print(f"Std:  {std_error:.4f} m")
 print(f"Max:  {max_error:.4f} m")
 print(f"Min:  {min_error:.4f} m")
 print(f"Duration: {total_time:.2f} s")
 print(f"Avg commanded speed: {avg_speed_cmd:.4f} m/s")
 print(f"Avg actual speed (v from OptiTrack): {avg_speed_actual:.4f} m/s")
+print(f"Start point: x={x[0]:.4f}, y={y[0]:.4f}")
+print(f"End point:   x={x[-1]:.4f}, y={y[-1]:.4f}")
 print(f"Saved to {save_path}")

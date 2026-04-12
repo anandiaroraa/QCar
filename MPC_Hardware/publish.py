@@ -229,6 +229,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         ck   = np.roll(ck,   -start_idx).tolist()
 
         target_ind = 0  # now always starts at 0
+        #so that it does the second circle well too
+        # target_ind = target_ind % len(cx)
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
         start_angle = data.car1.theta
@@ -334,7 +336,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         else:
             a_cmd = float(oa[0])                  # accel output
             steer1 = float(odelta[0])            # steer output
-            #steer1 = np.deg2rad (-8.0)
+            # steer1 = np.deg2rad (-7.0)
             speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
 
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
@@ -402,7 +404,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
+                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,

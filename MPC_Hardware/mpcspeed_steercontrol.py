@@ -43,7 +43,7 @@ DU_TH = 0.1  # iteration finish param
 
 TARGET_SPEED = TARGET_SPEED # [m/s] target  speed
 
-N_IND_SEARCH = 5  # Search index number
+N_IND_SEARCH = 10  # Search index number
 DT = DT
 # Vehicle parameters
 VEHICLE_LENGTH = 0.425  # [m]
@@ -59,6 +59,8 @@ MAX_DSTEER = MAX_DSTEER # maximum steering speed [rad/s]
 MAX_SPEED = MAX_SPEED  # maximum speed [m/s]
 MIN_SPEED = MIN_SPEED # minimum speed [m/s]
 MAX_ACCEL = MAX_ACCEL
+####steering fixed
+STEER_TRIM = np.deg2rad(-7.0)
 
 show_animation = False  # simulation
 
@@ -134,6 +136,14 @@ def update_state(state, a, delta):
 
 def get_nparray_from_matrix(x):
     return np.array(x).flatten()
+#steering control is fixed to STEER_TRIM, so we need to convert between mpc steer and cmd steer
+
+def mpc_to_cmd_steer(delta_mpc):
+    return np.array(delta_mpc) + STEER_TRIM
+
+
+def cmd_to_mpc_steer(delta_cmd):
+    return np.array(delta_cmd) - STEER_TRIM
 
 
 def calc_nearest_index(state, cx, cy, cyaw, pind):
@@ -166,7 +176,9 @@ def predict_motion(x0, oa, od, xref):
 
     state = State(x=x0[0], y=x0[1], yaw=x0[3], v=x0[2])
     for (ai, di, i) in zip(oa, od, range(1, T + 1)):
-        state = update_state(state, ai, di)
+        # state = update_state(state, ai, di)
+        #steering was fixed, we need to convert mpc steer to cmd steer before updating state
+        state = update_state(state, ai, float(mpc_to_cmd_steer(di)))
         xbar[0, i] = state.x
         xbar[1, i] = state.y
         xbar[2, i] = state.v
@@ -184,6 +196,9 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     if oa is None or od is None:
         oa = [0.0] * T
         od = [0.0] * T
+    #converting cmd steer to mpc steer before using in mpc
+    else:
+        od = get_nparray_from_matrix(cmd_to_mpc_steer(od))
  
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, od, xref)
@@ -199,7 +214,9 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
     else:
         print("Iterative is max iter")
 
-    return oa, od, ox, oy, oyaw, ov
+    # return oa, od, ox, oy, oyaw, ov
+    #converting mpc steer to cmd steer before returning
+    return oa, get_nparray_from_matrix(mpc_to_cmd_steer(od)), ox, oy, oyaw, ov
 
 
 def linear_mpc_control(xref, xbar, x0, dref):
@@ -225,7 +242,9 @@ def linear_mpc_control(xref, xbar, x0, dref):
             cost += cvxpy.quad_form(xref[:, t] - x[:, t], Q)
 
         A, B, C = get_linear_model_matrix(
-            xbar[2, t], xbar[3, t], dref[0, t])
+            # xbar[2, t], xbar[3, t], dref[0, t])
+            #steering was fixed, we need to convert mpc steer to cmd steer before using in model
+            xbar[2, t], xbar[3, t], float(mpc_to_cmd_steer(dref[0, t])))
         constraints += [x[:, t + 1] == A @ x[:, t] + B @ u[:, t] + C]
 
         if t < (T - 1):
@@ -239,7 +258,10 @@ def linear_mpc_control(xref, xbar, x0, dref):
     constraints += [x[2, :] <= MAX_SPEED]
     constraints += [x[2, :] >= MIN_SPEED]
     constraints += [cvxpy.abs(u[0, :]) <= MAX_ACCEL]
-    constraints += [cvxpy.abs(u[1, :]) <= MAX_STEER]
+    # constraints += [cvxpy.abs(u[1, :]) <= MAX_STEER]
+    # steering control is fixed to STEER_TRIM, so we need to convert between mpc steer and cmd steer
+    constraints += [u[1, :] <= (MAX_STEER - STEER_TRIM)]
+    constraints += [u[1, :] >= (-MAX_STEER - STEER_TRIM)]
 
     prob = cvxpy.Problem(cvxpy.Minimize(cost), constraints)
     prob.solve(solver=cvxpy.CLARABEL, verbose=False)
@@ -524,7 +546,7 @@ def main():
     dl = 1.0
     
     #SWITCH TRAJECTORY
-    trajectory_type = "circle"  # ← Change to "straight" for straight line 
+    trajectory_type = "straight"  # ← Change to "straight" for straight line 
     
     if trajectory_type == "circle":
         cx, cy, cyaw, ck, s = get_trajectory(
