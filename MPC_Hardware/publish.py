@@ -289,6 +289,10 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
     print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
 
+    ## debug ###
+    x_ref_old = 0 
+    y_ref_old = 0
+
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
         #added-clamping the velocity
@@ -298,18 +302,29 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         yaw=data.car1.theta,
         v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
         )
-        xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
+        xref, target_ind, dref = calc_ref_trajectory(
+            state, cx, cy, cyaw, ck, sp, dl, target_ind,
+            wraparound=(trajectory_type == "circle")
+        )
         x_ref_now = float(xref[0, 0])
         y_ref_now = float(xref[1, 0])
         cyaw_ref_now = float(xref[3, 0])
         v_ref_now = float(xref[2, 0])
+
+
+        if x_ref_now != x_ref_old and y_ref_now != y_ref_old:
+            print ("new reference point")
+        
+        x_ref_old = x_ref_now
+        y_ref_old = y_ref_now
+
         
 
 
         ############################### debug print statements ###############################
         ref_pose_msg = PoseStamped()
         ref_pose_msg.header.stamp = rospy.Time.now()
-        ref_pose_msg.header.frame_id = "map"
+        ref_pose_msg.header.frame_id = "world"
         ref_pose_msg.pose.position.x = x_ref_now
         ref_pose_msg.pose.position.y = y_ref_now
         ref_pose_msg.pose.position.z = 0.0
@@ -323,8 +338,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
             for j in range(xref.shape[1])
         ])
-        print(f"xref/yref horizon: {horizon_xy}")
-        print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
+        # print(f"xref/yref horizon: {horizon_xy}")
+        # print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
 
         x0 = [state.x, state.y, state.v, state.yaw]
         
@@ -339,7 +354,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             # steer1 = np.deg2rad (-7.0)
             speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
 
-        steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
+        steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER)) 
+        
         speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
 
         drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
@@ -404,7 +420,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
+                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,

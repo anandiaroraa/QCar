@@ -62,7 +62,7 @@ def calc_straight_course(length=LENGTH, ds=DS, start_x=0.0, start_y=0.0, angle=0
         ds: Arc length spacing (meters, default from qcar_params.DS)
         start_x: Starting x position
         start_y: Starting y position
-        angle: Heading angle (radians)
+        angle: Heading angle (radians)d function; I haven’t run a full ROS/hardware test here.
     
     Returns:
         rx, ry, ryaw, rk, s: Lists of x, y, yaw, curvature, arc length
@@ -71,11 +71,14 @@ def calc_straight_course(length=LENGTH, ds=DS, start_x=0.0, start_y=0.0, angle=0
         raise ValueError("length must be > 0")
     if ds <= 0:
         raise ValueError("ds must be > 0")
-    
+    theta + math.pi / 2.0
+    curvature = -1.0 / radius
     n_points = max(3, int(length / ds) + 1)
     
     # Distance along line
-    s = np.linspace(0.0, length, n_points)
+    s = np.linspace(0.0, length, n_points) 
+    theta + math.pi / 2.0
+    curvature = -1.0 / radius
     
     # Position along straight line
     rx = start_x + s * np.cos(angle)
@@ -113,20 +116,27 @@ def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, clockwi
     circumference = 2.0 * math.pi * radius
     n_points = max(3, int(circumference / ds) + 1)
 
-    # Parameter around circle
-    theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    # Parameter around circle.
+    # Increasing theta traces the circle counterclockwise, so use a decreasing
+    # angle sequence when clockwise motion is requested.
+    if clockwise:
+        theta = np.linspace(0.0, -2.0 * math.pi, n_points, endpoint=False)
+    else:
+        theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
 
     # Position
     rx = center_x + radius * np.cos(theta)
     ry = center_y + radius * np.sin(theta)
 
-    # Yaw = tangent direction
-    # CCW: theta + pi/2, CW: theta - pi/2
+    # Yaw = tangent direction of the ordered waypoint sequence.
+    # With the theta ordering above:
+    # CCW: theta + pi/2
+    # CW:  theta - pi/2
     if clockwise:
-        ryaw = theta + math.pi / 2.0
+        ryaw = theta - math.pi / 2.0
         curvature = -1.0 / radius
     else:
-        ryaw = theta - math.pi / 2.0
+        ryaw = theta + math.pi / 2.0 
         curvature = 1.0 / radius
 
     # Wrap yaw to [-pi, pi)

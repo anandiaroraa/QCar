@@ -10,5 +10,5 @@ WB         = 0.256 #[m] #wheel base distance between the front axle and the rear
 RADIUS     = 0.8   #[m] circle radius
 LENGTH     = 2  #[m] straight line length
 TARGET_SPEED = 0.09
-MAX_TIME   = 15.0 #change this during experiments
+MAX_TIME   = 30.0 #change this during experiments
 DS         = 0.02

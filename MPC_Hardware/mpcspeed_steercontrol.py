@@ -31,7 +31,9 @@ T = 11  # horizon length
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 2.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+# Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q = np.diag([10.0, 10.0, 0.5, 0.5])
+
 Qf = Q  # state final matrix
 # GOAL_DIS = 1.0  # goal distance
 # STOP_SPEED = 0.05  # stop speed
@@ -43,7 +45,7 @@ DU_TH = 0.1  # iteration finish param
 
 TARGET_SPEED = TARGET_SPEED # [m/s] target  speed
 
-N_IND_SEARCH = 10  # Search index number
+N_IND_SEARCH = 30  # Search index number
 DT = DT
 # Vehicle parameters
 VEHICLE_LENGTH = 0.425  # [m]
@@ -146,16 +148,36 @@ def cmd_to_mpc_steer(delta_cmd):
     return np.array(delta_cmd) - STEER_TRIM
 
 
-def calc_nearest_index(state, cx, cy, cyaw, pind):
+def calc_nearest_index(state, cx, cy, cyaw, pind, wraparound=False):
 
-    dx = [state.x - icx for icx in cx[pind:(pind + N_IND_SEARCH)]]
-    dy = [state.y - icy for icy in cy[pind:(pind + N_IND_SEARCH)]]
+    # old open-path code:
+    # dx = [state.x - icx for icx in cx[pind:(pind + N_IND_SEARCH)]]
+    # dy = [state.y - icy for icy in cy[pind:(pind + N_IND_SEARCH)]]
+    # d = [idx ** 2 + idy ** 2 for (idx, idy) in zip(dx, dy)]
+    # mind = min(d)
+    # ind = d.index(mind) + pind
 
-    d = [idx ** 2 + idy ** 2 for (idx, idy) in zip(dx, dy)]
+    if wraparound:
+        search_indices = [(pind + i) % len(cx) for i in range(N_IND_SEARCH)]
+        dx = [state.x - cx[i] for i in search_indices]
+        dy = [state.y - cy[i] for i in search_indices]
+        d = [idx ** 2 + idy ** 2 for (idx, idy) in zip(dx, dy)]
+        local_ind = d.index(min(d))
+        mind = d[local_ind]
+        ind = search_indices[local_ind]
+    else:
+        dx = [state.x - icx for icx in cx[pind:(pind + N_IND_SEARCH)]]
+        dy = [state.y - icy for icy in cy[pind:(pind + N_IND_SEARCH)]]
 
-    mind = min(d)
+        d = [idx ** 2 + idy ** 2 for (idx, idy) in zip(dx, dy)]
 
-    ind = d.index(mind) + pind
+        mind = min(d)
+
+        ind = d.index(mind) + pind
+
+    print (f'neareast point distance is {math.sqrt(mind):.3f} m')
+    print (f'next index is {ind}')
+    # ind = d.index(mind)
 
     mind = math.sqrt(mind)
 
@@ -282,14 +304,17 @@ def linear_mpc_control(xref, xbar, x0, dref):
     return oa, odelta, ox, oy, oyaw, ov
 
 
-def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
+def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind, wraparound=False):
     xref = np.zeros((NX, T + 1))
     dref = np.zeros((1, T + 1))
     ncourse = len(cx)
 
-    ind, _ = calc_nearest_index(state, cx, cy, cyaw, pind)
+    ind, _ = calc_nearest_index(state, cx, cy, cyaw, pind, wraparound=wraparound)
 
-    if pind >= ind:
+    # old open-path behavior:
+    # if pind >= ind:
+    #     ind = pind
+    if not wraparound and pind >= ind:
         ind = pind
 
     xref[0, 0] = cx[ind]
@@ -304,7 +329,27 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
         travel += abs(state.v) * DT
         dind = int(round(travel / dl))
 
-        if (ind + dind) < ncourse:
+        # old open-path code:
+        # if (ind + dind) < ncourse:
+        #     xref[0, i] = cx[ind + dind]
+        #     xref[1, i] = cy[ind + dind]
+        #     xref[2, i] = sp[ind + dind]
+        #     xref[3, i] = cyaw[ind + dind]
+        #     dref[0, i] = 0.0
+        # else:
+        #     xref[0, i] = cx[ncourse - 1]
+        #     xref[1, i] = cy[ncourse - 1]
+        #     xref[2, i] = sp[ncourse - 1]
+        #     xref[3, i] = cyaw[ncourse - 1]
+        #     dref[0, i] = 0.0
+        if wraparound:
+            ref_ind = (ind + dind) % ncourse
+            xref[0, i] = cx[ref_ind]
+            xref[1, i] = cy[ref_ind]
+            xref[2, i] = sp[ref_ind]
+            xref[3, i] = cyaw[ref_ind]
+            dref[0, i] = 0.0
+        elif (ind + dind) < ncourse:
             xref[0, i] = cx[ind + dind]
             xref[1, i] = cy[ind + dind]
             xref[2, i] = sp[ind + dind]
@@ -543,10 +588,11 @@ def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 1.0
+    dl = 0.02
+
     
     #SWITCH TRAJECTORY
-    trajectory_type = "straight"  # ← Change to "straight" for straight line 
+    trajectory_type = "circle"  # ← Change to "straight" for straight line 
     
     if trajectory_type == "circle":
         cx, cy, cyaw, ck, s = get_trajectory(
@@ -555,7 +601,7 @@ def main():
             ds=dl,
             center_x=0.0,
             center_y=0.0,
-            clockwise=False
+            clockwise=True 
         )
     else:  # straight
         cx, cy, cyaw, ck, s = get_trajectory(
@@ -576,27 +622,27 @@ def main():
     # cyaw = (np.array(cyaw) + np.pi) % (2 * np.pi) - np.pi
     # assert abs(cyaw).max() <= math.pi and abs(cyaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
     # # plot reference trajectory
-    # show_animation = True
+    show_animation = True
     
-    # if show_animation:  # pragma: no cover
+    if show_animation:  # pragma: no cover
         
-    #     # plt.close("all")
-    #     # plt.subplots()
-    #     plt.plot(cx, cy, "-r", label="reference")
-    #     # plot yaw as arrows
-    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-    #         plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
-    #     # label with yaw angle in radians
-    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-    #         plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
-    #     plt.grid(True)
-    #     plt.axis("equal")
-    #     plt.xlabel("x[m]")
-    #     plt.ylabel("y[m]")
-    #     plt.legend()
-    #     plt.title("Reference Trajectory")
-    #     plt.show()
-    # pdb.set_trace()
+        # plt.close("all")
+        # plt.subplots()
+        plt.plot(cx, cy, "-r", label="reference")
+        # plot yaw as arrows
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
+        # label with yaw angle in radians
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
+        plt.grid(True)
+        plt.axis("equal")
+        plt.xlabel("x[m]")
+        plt.ylabel("y[m]")
+        plt.legend()
+        plt.title("Reference Trajectory")
+        plt.show()
+    pdb.set_trace()
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
@@ -631,7 +677,7 @@ def main2():
     start = time.time()
 
     dl = 1.0  # course tick
-    cx, cy, cyaw, ck = get_straight_course3(dl)
+    cx, cy, cyaw, ck = get_straight_course3(dl)Fc
 
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
