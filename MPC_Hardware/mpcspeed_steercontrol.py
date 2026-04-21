@@ -303,6 +303,7 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     for i in range(1, T + 1):
         travel += abs(state.v) * DT
         dind = int(round(travel / dl))
+        print(f"[xref] v={state.v:.3f} dind={dind} travel={travel:.4f} dl={dl}")
 
         if (ind + dind) < ncourse:
             xref[0, i] = cx[ind + dind]
@@ -517,14 +518,6 @@ def get_switch_back_course(dl):
 
     return cx, cy, cyaw, ck
 '''
-#tune
-# def get_circle_course(dl, radius=2.0, center_x=0.0, center_y=0.0, clockwise=False):
-#     #dl as ds to keep naming consistent in your MPC pipeline
-#     cx, cy, cyaw, ck, s = calc_circle_course(
-#         radius=radius, ds=dl, center_x=center_x, center_y=center_y, clockwise=clockwise
-#     )
-#     return cx, cy, cyaw, ck
-
 def get_circular_course(dl, radius=1.0):
     circumference = 2.0 * math.pi * radius
     n_points = max(int(circumference / dl), 20)
@@ -543,10 +536,12 @@ def main():
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 1.0
+    dl = 0.02
     
     #SWITCH TRAJECTORY
-    trajectory_type = "straight"  # ← Change to "straight" for straight line 
+    trajectory_type = "circle"  # ← Change to "straight" for straight line 
+    #switch for cw or ccw
+    clockwise = True
     
     if trajectory_type == "circle":
         cx, cy, cyaw, ck, s = get_trajectory(
@@ -555,7 +550,7 @@ def main():
             ds=dl,
             center_x=0.0,
             center_y=0.0,
-            clockwise=False
+            direction_sign=-1 if clockwise else 1
         )
     else:  # straight
         cx, cy, cyaw, ck, s = get_trajectory(
@@ -576,27 +571,27 @@ def main():
     # cyaw = (np.array(cyaw) + np.pi) % (2 * np.pi) - np.pi
     # assert abs(cyaw).max() <= math.pi and abs(cyaw).min() >= -math.pi, "yaw not wrapped to [-pi, pi)"
     # # plot reference trajectory
-    # show_animation = True
+    show_animation = True
     
-    # if show_animation:  # pragma: no cover
+    if show_animation:  # pragma: no cover
         
-    #     # plt.close("all")
-    #     # plt.subplots()
-    #     plt.plot(cx, cy, "-r", label="reference")
-    #     # plot yaw as arrows
-    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-    #         plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
-    #     # label with yaw angle in radians
-    #     for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
-    #         plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
-    #     plt.grid(True)
-    #     plt.axis("equal")
-    #     plt.xlabel("x[m]")
-    #     plt.ylabel("y[m]")
-    #     plt.legend()
-    #     plt.title("Reference Trajectory")
-    #     plt.show()
-    # pdb.set_trace()
+        # plt.close("all")
+        # plt.subplots()
+        plt.plot(cx, cy, "-r", label="reference")
+        # plot yaw as arrows
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.arrow(x, y, 0.2 * math.cos(yaw), 0.2 * math.sin(yaw), head_width=0.05, head_length=0.1, fc='r', ec='r')
+        # label with yaw angle in radians
+        for (x, y, yaw) in zip(cx[::1], cy[::1], cyaw[::1]):
+            plt.text(x, y, f"{yaw:.2f}", fontsize=8, color='r', ha='center', va='center')
+        plt.grid(True)
+        plt.axis("equal")
+        plt.xlabel("x[m]")
+        plt.ylabel("y[m]")
+        plt.legend()
+        plt.title("Reference Trajectory")
+        plt.show()
+    pdb.set_trace()
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)

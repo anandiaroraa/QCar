@@ -18,6 +18,9 @@ from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, 
 from geometry_msgs.msg import(
     PoseStamped,
 )
+####added for live plotting
+from .live_plotter import LivePlotter
+####
 #from nav_msgs.msg import Path
 #import rospy
 
@@ -192,7 +195,12 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     dl = float(cfg.get("ds", DS))
     # # center_x = float(cfg.get("center_x", data.car1.x))
     # # center_y = float(cfg.get("center_y", data.car1.y))
-    clockwise = bool(cfg.get("clockwise", True))
+    direction_cfg = cfg.get("circle_direction")
+    if direction_cfg is None:
+        clockwise = bool(cfg.get("clockwise", True))
+    else:
+        clockwise = str(direction_cfg).lower() == "cw"
+    direction_sign = -1 if clockwise else 1
 
     if clockwise:
         center_x = data.car1.x + radius * math.sin(data.car1.theta)
@@ -212,7 +220,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             ds=dl,
             center_x=center_x,
             center_y=center_y,
-            clockwise=clockwise
+            direction_sign=direction_sign
         )
         #rotate the circle waypoints so waypoint 0 is closest to the car's start position
         min_dist = float('inf')
@@ -227,6 +235,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         cy   = np.roll(cy,   -start_idx).tolist()
         cyaw = np.roll(cyaw, -start_idx).tolist()
         ck   = np.roll(ck,   -start_idx).tolist()
+        cyaw = smooth_yaw(cyaw)
 
         target_ind = 0  # now always starts at 0
         #so that it does the second circle well too
@@ -248,6 +257,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         center_y = data.car1.y
     
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
+    print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
 
     sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
 
@@ -288,7 +298,10 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
     print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
-
+    ####added for live plotting
+    run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
+    plotter = LivePlotter(cx, cy, cyaw, title=run_label)
+    ####
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
         #added-clamping the velocity
@@ -329,10 +342,15 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         x0 = [state.x, state.y, state.v, state.yaw]
         
 
-        oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
+        # oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
+        ####added for the live plotting
+        oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
+        ####
 
         if oa is None or odelta is None:
             steer1, speed1 = 0.0, 0.0
+            ####adde for live plotting to not error out when MPC fails
+            ox, oy = None, None
         else:
             a_cmd = float(oa[0])                  # accel output
             steer1 = float(odelta[0])            # steer output
@@ -349,6 +367,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         give_command1.publish(drive_msg1)
 
         car1_history.append([state.x, state.y, state.yaw, state.v, steer1, speed1, time.time()])
+        ####added for live pllotting
+        plotter.update(
+            state_x      = state.x,
+            state_y      = state.y,
+            state_yaw    = state.yaw,
+            state_v      = state.v,
+            ox           = ox,
+            oy           = oy,
+            xref         = xref,
+            target_ind   = target_ind,
+            elapsed_time = time.time() - start_time,
+        )
+        ####
 
         rate.sleep()
     
@@ -364,6 +395,12 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         give_command1.publish(stop_msg)
         rospy.sleep(0.05)
 
+    #####added for live plotting
+    plotter.close()
+   
+    save_name = f"live_plot_{trajectory_type}_{time.strftime('%Y%m%d_%H%M%S')}.gif"
+    plotter.save(save_name)
+    #####
     # ADD: Calculate execution time and get original path
     execution_time = time.time() - start_time
     #original_path = state_machine.object_plan if hasattr(state_machine, 'object_plan') else None
@@ -378,14 +415,14 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     reference_path = {
         "reference_x": np.array(cx),
         "reference_y": np.array(cy),
-        "reference_yaw": np.array(cyaw),
+        "reference_yaw": npswitch.array(cyaw),
         "reference_curvature": np.array(ck),
         "center_x": center_x,
         "center_y": center_y,
         "radius": radius,
         "target_speed": TARGET_SPEED,
         "ds": dl,
-        "clockwise": clockwise,
+        "circle_direction": "cw" if clockwise else "ccw",
         "max_time": max_time,
     }
 
@@ -404,11 +441,12 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
+                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
-                    "clockwise": True,
+                    #switch for cw or ccw
+                    "circle_direction": "cw",
                     "max_time": MAX_TIME,
                     "length": LENGTH,  # For straight trajectory
                 })
@@ -427,7 +465,7 @@ if __name__ == "__main__":
                 center_x=reference_path["center_x"],
                 center_y=reference_path["center_y"],
                 ds=reference_path["ds"],
-                clockwise=reference_path["clockwise"],
+                circle_direction=reference_path["circle_direction"],
                 max_time=reference_path["max_time"],
                 reference_x=reference_path["reference_x"],
                 reference_y=reference_path["reference_y"],

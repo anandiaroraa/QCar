@@ -91,7 +91,7 @@ def calc_straight_course(length=LENGTH, ds=DS, start_x=0.0, start_y=0.0, angle=0
     return rx.tolist(), ry.tolist(), ryaw.tolist(), rk.tolist(), s.tolist()
 
 
-def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, clockwise=False):
+def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, direction_sign=1):
     """
     Circular path generator.
     
@@ -100,7 +100,7 @@ def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, clockwi
         ds: Arc length spacing (meters, default from qcar_params.DS)
         center_x: Circle center x position
         center_y: Circle center y position
-        clockwise: Boolean for clockwise direction
+        direction_sign: +1 for CCW travel, -1 for CW travel
     
     Returns:
         rx, ry, ryaw, rk, s: Lists of x, y, yaw, curvature, arc length
@@ -109,25 +109,22 @@ def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, clockwi
         raise ValueError("radius must be > 0")
     if ds <= 0:
         raise ValueError("ds must be > 0")
+    if direction_sign not in (-1, 1):
+        raise ValueError("direction_sign must be either +1 (CCW) or -1 (CW)")
 
     circumference = 2.0 * math.pi * radius
     n_points = max(3, int(circumference / ds) + 1)
 
-    # Parameter around circle
-    theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    # The point angle must advance in the same direction as travel.
+    theta = direction_sign * np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
 
     # Position
     rx = center_x + radius * np.cos(theta)
     ry = center_y + radius * np.sin(theta)
 
-    # Yaw = tangent direction
-    # CCW: theta + pi/2, CW: theta - pi/2
-    if clockwise:
-        ryaw = theta + math.pi / 2.0
-        curvature = -1.0 / radius
-    else:
-        ryaw = theta - math.pi / 2.0
-        curvature = 1.0 / radius
+    # Yaw is tangent to the traveled direction at each point.
+    ryaw = theta + direction_sign * (math.pi / 2.0)
+    curvature = direction_sign * (1.0 / radius)
 
     # Wrap yaw to [-pi, pi)
     # ryaw = np.array([angle_mod(a) for a in ryaw])
@@ -156,7 +153,7 @@ def get_trajectory(trajectory_type="circle", **kwargs):
         - ds: Arc length spacing (default from qcar_params.DS)
         - center_x: Circle center x (default 0.0)
         - center_y: Circle center y (default 0.0)
-        - clockwise: Boolean (default False)
+        - direction_sign: +1 for CCW, -1 for CW
     
     Straight parameters:
         - length: Line length (default from qcar_params.LENGTH)
@@ -174,7 +171,7 @@ def get_trajectory(trajectory_type="circle", **kwargs):
             ds=kwargs.get("ds", DS),
             center_x=kwargs.get("center_x", 0.0),
             center_y=kwargs.get("center_y", 0.0),
-            clockwise=kwargs.get("clockwise", False)
+            direction_sign=kwargs.get("direction_sign", 1)
         )
     elif trajectory_type.lower() == "straight":
         rx, ry, ryaw, rk, s = calc_straight_course(
@@ -201,7 +198,7 @@ if __name__ == "__main__":
         ds=DS,
         center_x=0.0,
         center_y=0.0,
-        clockwise=False,
+        direction_sign=1,
         debug_plot=True,
         plot_title="Generated Circle Trajectory"
     )
