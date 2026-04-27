@@ -11,7 +11,15 @@ import numpy as np
 import rospy
 from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
 #from scipy.spatial.transform import Rotation as R
-from .mpcspeed_steercontrol import State, calc_ref_trajectory, iterative_linear_mpc_control, calc_speed_profile, smooth_yaw
+#added goal_dist
+from .mpcspeed_steercontrol import (
+    State,
+    calc_ref_trajectory,
+    iterative_linear_mpc_control,
+    calc_speed_profile,
+    smooth_yaw,
+    GOAL_DIS,
+)
 
 from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, DS, LENGTH
 
@@ -223,6 +231,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             direction_sign=direction_sign
         )
         #rotate the circle waypoints so waypoint 0 is closest to the car's start position
+        #TO DO: verify without modifying the trajectory.
+        #this commented out did not help as the waypoints starting from the same point as the car works for right now  maybe later we can fix it.
         min_dist = float('inf')
         start_idx = 0
         for i in range(len(cx)):
@@ -233,13 +243,18 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
         cx   = np.roll(cx,   -start_idx).tolist()
         cy   = np.roll(cy,   -start_idx).tolist()
-        cyaw = np.roll(cyaw, -start_idx).tolist()
+        cyaw = np.roll(cyaw, -start_idx).tolist() 
         ck   = np.roll(ck,   -start_idx).tolist()
         cyaw = smooth_yaw(cyaw)
+        #added closed circle path
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + direction_sign * 2.0 * math.pi)
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
+        ####
 
-        target_ind = 0  # now always starts at 0
-        #so that it does the second circle well too
-        # target_ind = target_ind % len(cx)
+        # target index is initialized below using nearest waypoint search
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
         start_angle = data.car1.theta
@@ -260,7 +275,15 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
 
     sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
-
+    #added for termination
+    path_s = [0.0]
+    for i in range(1, len(cx)):
+        path_s.append(path_s[-1] + math.hypot(cx[i] - cx[i - 1], cy[i] - cy[i - 1]))
+    path_length = path_s[-1]
+    end_progress_margin = float(cfg.get("goal_progress_margin", GOAL_DIS))
+    print(f"Reference path length: {path_length:.3f}m")
+    print(f"Path-complete margin: {end_progress_margin:.3f}m")
+    ####
     # cyaw = smooth_yaw(cyaw)
     # wrap cyaw to [-pi, pi)
     # cyaw = (cyaw + np.pi) % (2 * np.pi) - np.pi
@@ -277,24 +300,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
     
-    # target_ind, _ = calc_nearest_index(
-    #     State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v),
-    #     cx, cy, cyaw, 0
-    # )
-    #so that the mpc starts with the nearest waypoint
+    min_dist = float('inf')
     target_ind = 0
-    # min_dist = float('inf')
-    # for i in range(len(cx)):
-    #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
-    #     if d < min_dist:
-    #         min_dist = d
-    #         target_ind = i
-    # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
-    print(f"target_ind at start: {target_ind}")
+    for i in range(len(cx)):
+        d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+        if d < min_dist:
+            min_dist = d
+            target_ind = i
+    print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
 
     oa, odelta = None, None
     #added this
-    data.car1.v = MIN_SPEED #starting should be a little warm
+    #TO DO: remove? not the way to change velocity
+    # data.car1.v = MIN_SPEED #starting should be a little warm
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
     print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
@@ -312,6 +330,17 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
         )
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
+        ####added for termination based on progress along the path
+        path_progress = path_s[min(target_ind, len(path_s) - 1)]
+        path_remaining = path_length - path_progress
+        if target_ind >= len(cx) - 1 or path_remaining <= end_progress_margin:
+            print(
+                f"Path complete: target_ind={target_ind}/{len(cx) - 1}, "
+                f"progress={path_progress:.3f}m/{path_length:.3f}m, "
+                f"remaining={path_remaining:.3f}m"
+            )
+            break
+
         x_ref_now = float(xref[0, 0])
         y_ref_now = float(xref[1, 0])
         cyaw_ref_now = float(xref[3, 0])
@@ -332,11 +361,12 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         ref_pose_msg.pose.orientation.w = math.cos(cyaw_ref_now * 0.5)
         ref_pose_pub.publish(ref_pose_msg)
 
-        horizon_xy = ", ".join([
-            f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
-            for j in range(xref.shape[1])
-        ])
-        print(f"xref/yref horizon: {horizon_xy}")
+        #TO DO: Commented
+        # horizon_xy = ", ".join([
+        #     f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
+        #     for j in range(xref.shape[1])
+        # ])
+        # print(f"xref/yref horizon: {horizon_xy}")
         print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
 
         x0 = [state.x, state.y, state.v, state.yaw]
@@ -415,13 +445,16 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     reference_path = {
         "reference_x": np.array(cx),
         "reference_y": np.array(cy),
-        "reference_yaw": npswitch.array(cyaw),
+        # np swicth was not defined so changed it"reference_yaw": npswitch.array(cyaw),
+        "reference_yaw": np.array(cyaw),
         "reference_curvature": np.array(ck),
         "center_x": center_x,
         "center_y": center_y,
         "radius": radius,
         "target_speed": TARGET_SPEED,
         "ds": dl,
+        "path_length": path_length,
+        "goal_progress_margin": end_progress_margin,
         "circle_direction": "cw" if clockwise else "ccw",
         "max_time": max_time,
     }
@@ -465,6 +498,8 @@ if __name__ == "__main__":
                 center_x=reference_path["center_x"],
                 center_y=reference_path["center_y"],
                 ds=reference_path["ds"],
+                path_length=reference_path["path_length"],
+                goal_progress_margin=reference_path["goal_progress_margin"],
                 circle_direction=reference_path["circle_direction"],
                 max_time=reference_path["max_time"],
                 reference_x=reference_path["reference_x"],

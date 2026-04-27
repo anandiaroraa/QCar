@@ -28,11 +28,13 @@ Usage in shared2.py / publish.py
 """
 
 import math
-import threading
 import time
 import numpy as np
 import matplotlib
-matplotlib.use("TkAgg")          # works on the Jetson desktop; change to "Qt5Agg" if needed
+try:
+    matplotlib.use("TkAgg")
+except Exception:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
@@ -104,20 +106,69 @@ class LivePlotter:
         self._min_dt = 1.0 / update_hz
         self._gif_frame_duration_ms = max(1, int(1000 / update_hz))
 
-        # ── shared state (written by control thread, read by plot thread) ──
-        self._lock   = threading.Lock()
-        self._latest = None          # dict with current data snapshot
-        self._alive  = True
+        # ── latest state snapshot ──
+        self._latest = None
         self._last_draw_time = 0.0
 
-        # trajectory history (accumulated in control thread, copied on draw)
+        # trajectory history
         self._hist_x   = []
         self._hist_y   = []
         self._gif_frames = []
 
-        # ── start background plot thread ──
-        self._thread = threading.Thread(target=self._plot_loop, daemon=True)
-        self._thread.start()
+        # ── figure setup on the main thread ──
+        plt.ion()
+        self._fig, self._ax = plt.subplots(figsize=(7, 7))
+        try:
+            self._fig.canvas.manager.set_window_title(self._title)
+        except Exception:
+            pass
+        self._ax.set_aspect("equal")
+        self._ax.grid(True, alpha=0.4)
+        self._ax.set_xlabel("x [m]")
+        self._ax.set_ylabel("y [m]")
+
+        # static reference path
+        self._ax.plot(self.cx, self.cy, "--", color="salmon",
+                      linewidth=1.2, alpha=0.7, label="Reference path", zorder=1)
+
+        # reference yaw arrows (every Nth point so it's not cluttered)
+        step = max(1, len(self.cx) // 30)
+        for xi, yi, yawi in zip(self.cx[::step], self.cy[::step], self.cyaw[::step]):
+            self._ax.annotate(
+                "",
+                xy=(xi + 0.12 * math.cos(yawi), yi + 0.12 * math.sin(yawi)),
+                xytext=(xi, yi),
+                arrowprops=dict(arrowstyle="->", color="salmon", lw=0.8),
+                zorder=2,
+            )
+
+        # dynamic artists (updated every frame)
+        self._line_traj, = self._ax.plot([], [], "-", color="tab:blue",
+                                         linewidth=1.5, label="Actual path", zorder=3)
+        self._line_mpc,  = self._ax.plot([], [], "x", color="tab:red",
+                                         markersize=4, alpha=0.8,
+                                         label="MPC horizon", zorder=4)
+        self._line_xref, = self._ax.plot(
+            [], [], "-o",
+            color="deepskyblue",
+            linewidth=2.0,
+            markersize=7,
+            markerfacecolor="gold",
+            markeredgecolor="black",
+            markeredgewidth=0.8,
+            alpha=0.95,
+            label="xref lookahead",
+            zorder=5,
+        )
+        self._scat_pos = self._ax.scatter([], [], s=40, c="tab:blue",
+                                          marker="o", zorder=6)
+
+        self._car_patch = None
+        self._car_arrow = None
+        self._title_obj = self._ax.set_title(self._title)
+        self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6)
+        plt.tight_layout()
+        plt.show(block=False)
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -128,7 +179,7 @@ class LivePlotter:
                elapsed_time=0.0):
         """
         Call this once per MPC iteration (inside your control loop).
-        Thread-safe; never blocks the caller.
+        Updates the live window on the main thread.
         """
         # accumulate history in the calling thread
         self._hist_x.append(state_x)
@@ -145,13 +196,23 @@ class LivePlotter:
             elapsed_time=elapsed_time,
         )
 
-        with self._lock:
-            self._latest = payload
+        self._latest = payload
+
+        now = time.time()
+        if now - self._last_draw_time >= self._min_dt:
+            self._redraw(payload)
+            self._last_draw_time = now
+            try:
+                self._fig.canvas.flush_events()
+            except Exception:
+                pass
 
     def close(self):
-        """Signal the plot thread to stop."""
-        self._alive = False
-        self._thread.join(timeout=3.0)
+        """Close the plot window."""
+        try:
+            plt.close(self._fig)
+        except Exception:
+            pass
 
     def save(self, filepath="live_plot_final.gif"):
         """Save the current figure to disk (call after close())."""
@@ -177,86 +238,6 @@ class LivePlotter:
                 print(f"[LivePlotter] saved → {filepath}")
             except Exception as e:
                 print(f"[LivePlotter] save failed: {e}")
-
-    # ── internal plot thread ───────────────────────────────────────────────────
-
-    def _plot_loop(self):
-        plt.ion()
-        self._fig, self._ax = plt.subplots(figsize=(7, 7))
-        self._fig.canvas.manager.set_window_title(self._title)
-        self._ax.set_aspect("equal")
-        self._ax.grid(True, alpha=0.4)
-        self._ax.set_xlabel("x [m]")
-        self._ax.set_ylabel("y [m]")
-
-        # ── static reference path ──
-        self._ax.plot(self.cx, self.cy, "--", color="salmon",
-                      linewidth=1.2, alpha=0.7, label="Reference path", zorder=1)
-
-        # ── reference yaw arrows (every Nth point so it's not cluttered) ──
-        step = max(1, len(self.cx) // 30)
-        for xi, yi, yawi in zip(self.cx[::step], self.cy[::step], self.cyaw[::step]):
-            self._ax.annotate("",
-                xy=(xi + 0.12*math.cos(yawi), yi + 0.12*math.sin(yawi)),
-                xytext=(xi, yi),
-                arrowprops=dict(arrowstyle="->", color="salmon", lw=0.8),
-                zorder=2)
-
-        # ── dynamic artists (updated every frame) ──
-        self._line_traj, = self._ax.plot([], [], "-", color="tab:blue",
-                                         linewidth=1.5, label="Actual path", zorder=3)
-        self._line_mpc,  = self._ax.plot([], [], "x", color="tab:red",
-                                         markersize=4, alpha=0.8,
-                                         label="MPC horizon", zorder=4)
-        self._line_xref, = self._ax.plot(
-            [], [], "-o",
-            color="deepskyblue",
-            linewidth=2.0,
-            markersize=7,
-            markerfacecolor="gold",
-            markeredgecolor="black",
-            markeredgewidth=0.8,
-            alpha=0.95,
-            label="xref lookahead",
-            zorder=5,
-        )
-        self._scat_pos    = self._ax.scatter([], [], s=40, c="tab:blue",
-                                             marker="o", zorder=6)
-
-        # car body placeholder – will be replaced each frame
-        self._car_patch  = None
-        self._car_arrow  = None
-
-        # title / legend
-        self._title_obj = self._ax.set_title(self._title)
-        self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6)
-
-        plt.tight_layout()
-
-        while self._alive:
-            now = time.time()
-            if now - self._last_draw_time < self._min_dt:
-                time.sleep(0.01)
-                continue
-
-            with self._lock:
-                data = self._latest
-
-            if data is None:
-                time.sleep(0.05)
-                continue
-
-            self._redraw(data)
-            self._last_draw_time = time.time()
-
-        # keep window open briefly after run ends
-        try:
-            plt.ioff()
-            plt.show(block=False)
-            time.sleep(2.0)
-            plt.close(self._fig)
-        except Exception:
-            pass
 
     def _redraw(self, d):
         ax = self._ax

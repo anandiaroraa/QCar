@@ -29,15 +29,20 @@ print("\nKeys in npz file:", list(d.keys()))
 
 hist = d['car1_history']
 print(f"car1_history shape: {hist.shape}")
-print("Columns: [x, y, yaw, v, steer, speed, timestamp]")
+if hist.shape[1] >= 8:
+    print("Columns: [x, y, yaw, v_mpc_clipped, steer, speed_cmd, timestamp, v_raw_optitrack]")
+else:
+    print("Columns: [x, y, yaw, v_mpc_clipped, steer, speed_cmd, timestamp]")
+    print("NOTE: old log file has no raw OptiTrack speed column; using clipped MPC speed as fallback.")
 
 x = hist[:, 0]
 y = hist[:, 1]
 yaw = hist[:, 2]
-v = hist[:, 3]
+v_mpc = hist[:, 3]
 steer = hist[:, 4]
 speed_cmd = hist[:, 5]
 timestamp = hist[:, 6]
+v_raw = hist[:, 7] if hist.shape[1] >= 8 else v_mpc
 
 theta_start = hist[0, 2]
 # Build a straight-line reference from the start pose heading.
@@ -98,7 +103,8 @@ axs[0].grid(True)
 
 # Speed profile
 t_rel = timestamp - timestamp[0]
-axs[1].plot(t_rel, v, 'b-', label='Actual speed')
+axs[1].plot(t_rel, v_raw, 'b-', label='Raw measured speed')
+axs[1].plot(t_rel, v_mpc, color='0.35', linestyle='--', label='MPC speed used')
 axs[1].plot(t_rel, speed_cmd, 'r-', label='Commanded speed')
 axs[1].axhline(y=MAX_SPEED, color='g', linestyle='-', label='MAX_SPEED')
 axs[1].axhline(y=MIN_SPEED, color='orange', linestyle='-', label='MIN_SPEED')
@@ -156,7 +162,8 @@ max_error = tracking_error.max()
 min_error = tracking_error.min()
 total_time = timestamp[-1] - timestamp[0]
 avg_speed_cmd = np.mean(speed_cmd)
-avg_speed_actual = np.mean(np.abs(v))
+avg_speed_raw = np.mean(np.abs(v_raw))
+avg_speed_mpc = np.mean(np.abs(v_mpc))
 
 print(f"RMSE: {rmse:.4f} m")
 print(f"Mean: {mean_error:.4f} m")
@@ -165,7 +172,8 @@ print(f"Max:  {max_error:.4f} m")
 print(f"Min:  {min_error:.4f} m")
 print(f"Duration: {total_time:.2f} s")
 print(f"Avg commanded speed: {avg_speed_cmd:.4f} m/s")
-print(f"Avg actual speed (v from OptiTrack): {avg_speed_actual:.4f} m/s")
+print(f"Avg raw measured speed: {avg_speed_raw:.4f} m/s")
+print(f"Avg MPC speed used: {avg_speed_mpc:.4f} m/s")
 print(f"Start point: x={x[0]:.4f}, y={y[0]:.4f}")
 print(f"End point:   x={x[-1]:.4f}, y={y[-1]:.4f}")
 print(f"Saved to {save_path}")

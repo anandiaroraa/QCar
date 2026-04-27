@@ -33,8 +33,8 @@ R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 2.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-# GOAL_DIS = 1.0  # goal distance
-# STOP_SPEED = 0.05  # stop speed
+GOAL_DIS = 0.08  # position tolerance to the final waypoint [m]
+STOP_SPEED = 0.05  # stop speed
 # MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
@@ -76,6 +76,21 @@ class State:
         self.yaw = yaw
         self.v = v
         self.predelta = None
+
+# added initial state builder that can take live pose as input, so that we can start mpc from current location of the car instead of the start of the trajectory
+def build_initial_state(cx, cy, cyaw, live_pose=None):
+    if live_pose is None:
+        return State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
+
+    yaw = getattr(live_pose, "theta", getattr(live_pose, "yaw", cyaw[0]))
+    speed = getattr(live_pose, "v", 0.0)
+
+    return State(
+        x=float(getattr(live_pose, "x", cx[0])),
+        y=float(getattr(live_pose, "y", cy[0])),
+        yaw=float(yaw),
+        v=float(np.clip(speed, MIN_SPEED, MAX_SPEED)),
+    )
 
 def pi_2_pi(angle):
     return (angle + math.pi) % (2 * math.pi) - math.pi
@@ -532,11 +547,11 @@ def get_circular_course(dl, radius=1.0):
 
     return cx, cy, cyaw, ck
 
-def main():
+def main(live_pose=None):
     print(__file__ + " start!!")
     start = time.time()
 
-    dl = 0.02
+    dl = 0.1
     
     #SWITCH TRAJECTORY
     trajectory_type = "circle"  # ← Change to "straight" for straight line 
@@ -594,8 +609,9 @@ def main():
     pdb.set_trace()
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
-    initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
-
+    # initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
+    # TO DO: initial state should be the current locaation of the car
+    initial_state = build_initial_state(cx, cy, cyaw, live_pose=live_pose)
     print("Trajectory loaded, ready for hardware control")
 
     elapsed_time = time.time() - start
