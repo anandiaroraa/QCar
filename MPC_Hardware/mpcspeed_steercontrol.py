@@ -31,10 +31,10 @@ T = 11  # horizon length
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 2.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q = np.diag([1.0, 1.0, 1.0, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 0.08  # position tolerance to the final waypoint [m]
-STOP_SPEED = 0.05  # stop speed
+GOAL_DIS = 0.08  # position tolerance to the final waypoint [m] #uncomment
+STOP_SPEED = 0.0  # stop speed #uncomment
 # MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
@@ -77,7 +77,7 @@ class State:
         self.v = v
         self.predelta = None
 
-# added initial state builder that can take live pose as input, so that we can start mpc from current location of the car instead of the start of the trajectory
+# added initial state builder that can take live pose as input, so that we can start mpc from current location of the car instead of the start of the trajectory #uncomment
 def build_initial_state(cx, cy, cyaw, live_pose=None):
     if live_pose is None:
         return State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
@@ -548,6 +548,7 @@ def get_circular_course(dl, radius=1.0):
     return cx, cy, cyaw, ck
 
 def main(live_pose=None):
+    #live_pose=None uncomment
     print(__file__ + " start!!")
     start = time.time()
 

@@ -300,14 +300,14 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
     
-    min_dist = float('inf')
+    # min_dist = float('inf')
     target_ind = 0
-    for i in range(len(cx)):
-        d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
-        if d < min_dist:
-            min_dist = d
-            target_ind = i
-    print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
+    # for i in range(len(cx)):
+    #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+    #     if d < min_dist:
+    #         min_dist = d
+    #         target_ind = i
+    # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
 
     oa, odelta = None, None
     #added this
