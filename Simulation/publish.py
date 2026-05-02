@@ -1,0 +1,515 @@
+import pdb
+import time
+import math
+#from ..environments.hardware_environment import PushingAmongObstaclesEnv
+#from ..utils.load_config import multi_agent_config as config
+#from ..utils.rate_for_simulation import Rate
+#from ..utils.angle_utils import quat2euler_single as quat2euler
+from .utils import quat2euler
+#from ..controllers.state_machine_controller_hardware import ControlStateMachine
+import numpy as np
+import rospy
+from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
+#from scipy.spatial.transform import Rotation as R
+#added goal_dist
+from .mpcspeed_steercontrol import (
+    State,
+    calc_ref_trajectory,
+    iterative_linear_mpc_control,
+    calc_speed_profile,
+    smooth_yaw,
+    GOAL_DIS,
+)
+
+from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, DS, LENGTH
+
+from geometry_msgs.msg import(
+    PoseStamped,
+)
+####added for live plotting
+from .live_plotter import LivePlotter
+####
+#from nav_msgs.msg import Path
+#import rospy
+
+#REACHED_GOAL = 8
+
+class _Pose():
+    def __init__(self):
+        self.reset()
+from .trajectory import get_trajectory
+
+from geometry_msgs.msg import(
+    PoseStamped,
+)
+#from nav_msgs.msg import Path
+#import rospy
+
+#REACHED_GOAL = 8
+
+class _Pose():
+    def __init__(self):
+        self.reset()
+    def reset(self): 
+        self.x = 0
+        self.y = 0
+        self.theta = 0.0
+        self.quat = [0, 0, 0, 1]
+        self.worldx = 0
+        self.worldy = 0
+        #added pose received flag + speed estimate 
+        self.received = False
+        self.v = 0.0
+        self._last_x = None
+        self._last_y = None
+        self._last_t = None
+
+def data2mpc(x, y, theta, v):
+    pass
+    return [x, y, v, theta]
+
+def mpc2data(x, y, theta, v):
+    pass
+    return [x, y, theta, v]
+
+class Data():
+    def __init__(self):
+        self.car1 = _Pose()
+    
+    def update_car1_pose(self, msg):
+        pose = msg.pose.position
+        orientation = msg.pose.orientation
+        self.car1.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
+        # quat to euler uses x y z w
+        self.car1.theta = float(quat2euler([self.car1.quat[1], self.car1.quat[2], self.car1.quat[3], self.car1.quat[0]])[2])
+        self.car1.x = pose.x
+        self.car1.y = pose.y
+        #added mark received + estimate speed
+        self.car1.received = True
+        now = time.time()
+        if self.car1._last_t is not None:
+            dt = max(now - self.car1._last_t, 1e-3)
+            self.car1.v = float(math.hypot(self.car1.x - self.car1._last_x,
+                                           self.car1.y - self.car1._last_y) / dt)
+            self.car1.v = float(np.clip(self.car1.v, 0.0, MAX_SPEED))
+        self.car1._last_x = self.car1.x
+        self.car1._last_y = self.car1.y
+        self.car1._last_t = now
+
+#changed the func name run_carpool_simulation to run_car
+def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
+    #sim_env = PushingAmongObstaclesEnv(test_case=test_case)
+    #rospy.init_node("qcar_ros", anonymous=True)
+    if not rospy.core.is_initialized():
+        rospy.init_node("qcar_ros", anonymous=True)
+    # obs = sim_env.set_init_states()
+    data = Data()
+    get_car1_pose = rospy.Subscriber("/natnet_ros/RigidBody1/pose", PoseStamped, data.update_car1_pose)
+    rospy.sleep(1)
+    
+    give_command1 = rospy.Publisher("/qcar/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
+    ref_pose_pub = rospy.Publisher("/mpc/reference_pose", PoseStamped, queue_size=1)
+
+    car1_history = []
+
+    # collected_data = []
+    # processed_data = np.array([])
+    # reset_counter = 0
+    
+    # published_pose = False
+    # backed_up = False
+    # display_status_message = []
+    # trial_start_time = time.time()
+    # trial_max_time = 60.0
+    # trial_curr_time = 0.0
+    # rate = rospy.Rate(1/config.dt)
+    # filenames = []
+    # max_time = 1800
+    # obs_t = []
+    
+    # # sim_loops = DT / config.dt
+    print("Waiting for pose data...")
+    rate = rospy.Rate(10)  # 10 Hz
+    timeout = rospy.Time.now() + rospy.Duration(10.0)  # 10 second timeout
+    
+    while rospy.Time.now() < timeout:
+        # Check if we've received valid data (not default values)
+        #if (data.car1.quat != [0, 0, 0, 1]):
+        if data.car1.received:
+            print("Received all pose data!")
+            break
+        rate.sleep()
+    else:
+        print("WARNING: Timeout waiting for pose data!")
+    #car1_start_pose = np.array([car1_theta[0], car1_theta[1], car1_theta[2]])
+    
+
+    print("Initial pose of car1:", data.car1.x, data.car1.y, data.car1.theta)
+    
+    #object_goal_pose = sim_env.object_goal_pose
+    #object_goal_pose = np.array([0.5, 0.5])  # Placeholder goal pose; replace with sim_env.object_goal_pose when available
+    #print("Object goal pose:", object_goal_pose)
+    object_goal_pose = None
+    #rate = Rate(1 / config.dt)
+
+    #start_time = time.time()
+    #max_time = 250
+    #state_machine = ControlStateMachine(sim_env, objecta!")
+
+    #car1_quat = [data.car1.x, data.car1.y, data.car1.quat[0], data.car1.quat[1], data.car1.quat[2], data.car1.quat[3]]
+    
+
+    #car1_theta = np.array([car1_quat[0], car1_quat[1], (np.pi - R.from_quat(car1_quat[2:6]).as_euler('xyz', degrees=False)[0]) % (2 * np.pi)])
+    
+
+    #car1_start_pose = np.array([car1_theta[0], car1_theta[1], car1_theta[2]])
+    
+
+    #print("Initial pose of car1:", data.car1.x, data.car1.y, data.car1.theta)
+    
+    #object_goal_pose = sim_env.object_goal_pose
+    #object_goal_pose = np.array([0.5, 0.5])  # Placeholder goal pose; replace with sim_env.object_goal_pose when available
+    #print("Object goal pose:", object_goal_pose)
+    #object_goal_pose = None
+    #rate = Rate(1 / config.dt)
+
+    #start_time = time.time()
+    #max_time = 250
+    #state_machine = ControlStateMachine(sim_env, object_goal_pose, at_pushing_pose, path_tracking_config)
+    
+    #while state_machine.state != REACHED_GOAL and time.time() - start_time < max_time:
+        #state_machine.update_poses(data=data)
+        #action = state_machine.execute()
+        
+        # ADD: Record pose history (after update_poses)
+        #car1_history.append(state_machine.car1_pose.copy())
+        
+        #added safety clamps
+        #steer1 = float(np.clip(action[0], -MAX_STEER, MAX_STEER))
+        #speed1 = float(np.clip(action[1], MIN_SPEED, MAX_SPEED))
+
+        #drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
+        
+        #drive_msg1 = AckermannDriveStamped(drive=drive_car1)
+
+        #give_command1.publish(drive_msg1)
+        
+        #rate.sleep()
+        
+    #added my mpc
+    cfg = path_tracking_config or {}
+    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
+    radius = float(cfg.get("radius", RADIUS))
+    dl = float(cfg.get("ds", DS))
+    # # center_x = float(cfg.get("center_x", data.car1.x))
+    # # center_y = float(cfg.get("center_y", data.car1.y))
+    direction_cfg = cfg.get("circle_direction")
+    if direction_cfg is None:
+        clockwise = bool(cfg.get("clockwise", True))
+    else:
+        clockwise = str(direction_cfg).lower() == "cw"
+    direction_sign = -1 if clockwise else 1
+
+    if clockwise:
+        center_x = data.car1.x + radius * math.sin(data.car1.theta)
+        center_y = data.car1.y - radius * math.cos(data.car1.theta)
+    else:
+        center_x = data.car1.x - radius * math.sin(data.car1.theta)
+        center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    # #center_x = data.car1.x - radius * math.sin(data.car1.theta)
+    # #center_y = data.car1.y + radius * math.cos(data.car1.theta)
+    print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
+    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
+    print(f"START POSE used for path generation: x={data.car1.x:.3f}, y={data.car1.y:.3f}, theta={data.car1.theta:.3f}")
+    if trajectory_type == "circle":
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "circle",
+            radius=radius,
+            ds=dl,
+            center_x=center_x,
+            center_y=center_y,
+            direction_sign=direction_sign
+        )
+        #rotate the circle waypoints so waypoint 0 is closest to the car's start position
+        #TO DO: verify without modifying the trajectory.
+        #this commented out did not help as the waypoints starting from the same point as the car works for right now  maybe later we can fix it.
+        min_dist = float('inf')
+        start_idx = 0
+        for i in range(len(cx)):
+            d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+            if d < min_dist:
+                min_dist = d
+                start_idx = i
+
+        cx   = np.roll(cx,   -start_idx).tolist()
+        cy   = np.roll(cy,   -start_idx).tolist()
+        cyaw = np.roll(cyaw, -start_idx).tolist() 
+        ck   = np.roll(ck,   -start_idx).tolist()
+        cyaw = smooth_yaw(cyaw)
+        #added closed circle path
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + direction_sign * 2.0 * math.pi)
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
+        ####
+
+        # target index is initialized below using nearest waypoint search
+    else:  # straight
+        straight_length = float(cfg.get("length", LENGTH))
+        start_angle = data.car1.theta
+        print(f"Straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
+        
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "straight",
+            length=straight_length,
+            ds=dl,
+            start_x=data.car1.x,
+            start_y=data.car1.y,
+            angle=start_angle
+        )
+        center_x = data.car1.x
+        center_y = data.car1.y
+    
+    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
+    print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
+
+    sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
+    #added for termination
+    path_s = [0.0]
+    for i in range(1, len(cx)):
+        path_s.append(path_s[-1] + math.hypot(cx[i] - cx[i - 1], cy[i] - cy[i - 1]))
+    path_length = path_s[-1]
+    end_progress_margin = float(cfg.get("goal_progress_margin", GOAL_DIS))
+    print(f"Reference path length: {path_length:.3f}m")
+    print(f"Path-complete margin: {end_progress_margin:.3f}m")
+    ####
+    # cyaw = smooth_yaw(cyaw)
+    # wrap cyaw to [-pi, pi)
+    # cyaw = (cyaw + np.pi) % (2 * np.pi) - np.pi
+
+    print("Generated reference trajectory points (index, xref, yref, yawref, kref, vref):")
+    for i in range(len(cx)):
+        print(
+            f"  ref[{i:03d}] xref={float(cx[i]):.3f}, yref={float(cy[i]):.3f}, "
+            f"yawref={float(cyaw[i]):.3f}, kref={float(ck[i]):.4f}, vref={float(sp[i]):.3f}"
+        )
+
+    start_time = time.time()
+    max_time = float(cfg.get("max_time", 250.0))
+
+    rate = rospy.Rate(int(max(1, round(1.0 / DT))))
+    
+    # min_dist = float('inf')
+    target_ind = 0
+    # for i in range(len(cx)):
+    #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
+    #     if d < min_dist:
+    #         min_dist = d
+    #         target_ind = i
+    # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
+
+    oa, odelta = None, None
+    #added this
+    #TO DO: remove? not the way to change velocity
+    # data.car1.v = MIN_SPEED #starting should be a little warm
+
+    print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
+    print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
+    ####added for live plotting
+    run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
+    plotter = LivePlotter(cx, cy, cyaw, title=run_label)
+    ####
+    while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
+        #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
+        #added-clamping the velocity
+        state = State(
+        x=data.car1.x,
+        y=data.car1.y,
+        yaw=data.car1.theta,
+        v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
+        )
+        xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
+        ####added for termination based on progress along the path
+        path_progress = path_s[min(target_ind, len(path_s) - 1)]
+        path_remaining = path_length - path_progress
+        if target_ind >= len(cx) - 1 or path_remaining <= end_progress_margin:
+            print(
+                f"Path complete: target_ind={target_ind}/{len(cx) - 1}, "
+                f"progress={path_progress:.3f}m/{path_length:.3f}m, "
+                f"remaining={path_remaining:.3f}m"
+            )
+            break
+
+        x_ref_now = float(xref[0, 0])
+        y_ref_now = float(xref[1, 0])
+        cyaw_ref_now = float(xref[3, 0])
+        v_ref_now = float(xref[2, 0])
+        
+
+
+        ############################### debug print statements ###############################
+        ref_pose_msg = PoseStamped()
+        ref_pose_msg.header.stamp = rospy.Time.now()
+        ref_pose_msg.header.frame_id = "map"
+        ref_pose_msg.pose.position.x = x_ref_now
+        ref_pose_msg.pose.position.y = y_ref_now
+        ref_pose_msg.pose.position.z = 0.0
+        ref_pose_msg.pose.orientation.x = 0.0
+        ref_pose_msg.pose.orientation.y = 0.0
+        ref_pose_msg.pose.orientation.z = math.sin(cyaw_ref_now * 0.5)
+        ref_pose_msg.pose.orientation.w = math.cos(cyaw_ref_now * 0.5)
+        ref_pose_pub.publish(ref_pose_msg)
+
+        #TO DO: Commented
+        # horizon_xy = ", ".join([
+        #     f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
+        #     for j in range(xref.shape[1])
+        # ])
+        # print(f"xref/yref horizon: {horizon_xy}")
+        print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
+
+        x0 = [state.x, state.y, state.v, state.yaw]
+        
+
+        # oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
+        ####added for the live plotting
+        oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
+        ####
+
+        if oa is None or odelta is None:
+            steer1, speed1 = 0.0, 0.0
+            ####adde for live plotting to not error out when MPC fails
+            ox, oy = None, None
+        else:
+            a_cmd = float(oa[0])                  # accel output
+            steer1 = float(odelta[0])            # steer output
+            # steer1 = np.deg2rad (-7.0)
+            speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
+
+        steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
+        speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
+
+        drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
+        drive_msg1 = AckermannDriveStamped()
+        drive_msg1.header.stamp = rospy.Time.now()
+        drive_msg1.drive = drive_car1
+        give_command1.publish(drive_msg1)
+
+        car1_history.append([state.x, state.y, state.yaw, state.v, steer1, speed1, time.time()])
+        ####added for live pllotting
+        plotter.update(
+            state_x      = state.x,
+            state_y      = state.y,
+            state_yaw    = state.yaw,
+            state_v      = state.v,
+            ox           = ox,
+            oy           = oy,
+            xref         = xref,
+            target_ind   = target_ind,
+            elapsed_time = time.time() - start_time,
+        )
+        ####
+
+        rate.sleep()
+    
+    # ADD: Stop the robots
+    stop_drive = AckermannDrive(steering_angle=0.0, speed=0.0)
+    #stop_msg = AckermannDriveStamped(drive=stop_drive)
+    #give_command1.publish(stop_msg)
+    
+    stop_msg = AckermannDriveStamped()
+    stop_msg.header.stamp = rospy.Time.now()
+    stop_msg.drive = stop_drive
+    for _ in range(5):
+        give_command1.publish(stop_msg)
+        rospy.sleep(0.05)
+
+    #####added for live plotting
+    plotter.close()
+   
+    save_name = f"live_plot_{trajectory_type}_{time.strftime('%Y%m%d_%H%M%S')}.gif"
+    plotter.save(save_name)
+    #####
+    # ADD: Calculate execution time and get original path
+    execution_time = time.time() - start_time
+    #original_path = state_machine.object_plan if hasattr(state_machine, 'object_plan') else None
+    original_path = None 
+    # ADD: Print summary
+    
+    # if time.time() - start_time > max_time:
+    #     print("Hardware experiment timed out.")
+    # else:
+    #     print(f"Hardware experiment completed in {execution_time:.2f} seconds")
+    #tune
+    reference_path = {
+        "reference_x": np.array(cx),
+        "reference_y": np.array(cy),
+        # np swicth was not defined so changed it"reference_yaw": npswitch.array(cyaw),
+        "reference_yaw": np.array(cyaw),
+        "reference_curvature": np.array(ck),
+        "center_x": center_x,
+        "center_y": center_y,
+        "radius": radius,
+        "target_speed": TARGET_SPEED,
+        "ds": dl,
+        "path_length": path_length,
+        "goal_progress_margin": end_progress_margin,
+        "circle_direction": "cw" if clockwise else "ccw",
+        "max_time": max_time,
+    }
+
+    # ADD: Return collected data #tune
+    return car1_history, original_path, execution_time, object_goal_pose, reference_path
+
+if __name__ == "__main__":
+    import os    
+    test_cases = [1]  # Your hardware test case
+    num_runs = 1
+    
+    # Create directory for results
+    for test_case in test_cases:
+        results_dir = f'hardware_results_test{test_case}' #change to hardware_results_test_straight
+        os.makedirs(results_dir, exist_ok=True)
+        try:
+            #SWITCH TRAJECTORY 
+            car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
+                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
+                    # "radius": RADIUS,
+                    "ds": DS,
+                    "target_speed": TARGET_SPEED,
+                    #switch for cw or ccw
+                    "circle_direction": "cw",
+                    "max_time": MAX_TIME,
+                    "length": LENGTH,  # For straight trajectory
+                })
+            
+            # Save this run immediately
+            np.savez_compressed(
+                os.path.join(results_dir, f'run_{0:03d}_t_{time.time():.5f}.npz'),
+                car1_history=np.array(car1_hist),
+                original_path=np.array(orig_path) if orig_path is not None else np.array([]),
+                execution_time=exec_time,
+                object_goal_pose=goal,
+                run_number=0,
+                #tune
+                radius=reference_path["radius"],
+                target_speed=reference_path["target_speed"],
+                center_x=reference_path["center_x"],
+                center_y=reference_path["center_y"],
+                ds=reference_path["ds"],
+                path_length=reference_path["path_length"],
+                goal_progress_margin=reference_path["goal_progress_margin"],
+                circle_direction=reference_path["circle_direction"],
+                max_time=reference_path["max_time"],
+                reference_x=reference_path["reference_x"],
+                reference_y=reference_path["reference_y"],
+                reference_yaw=reference_path["reference_yaw"],
+                reference_curvature=reference_path["reference_curvature"],
+            )
+        except Exception as e:
+            print(f"  ✗ Run failed with error: {e}")
+        
+        # print(f"\n{'='*50}")
+        # print(f"All results saved to {results_dir}/")
+        # print(f"{'='*50}")
