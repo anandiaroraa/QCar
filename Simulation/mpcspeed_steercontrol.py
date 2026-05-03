@@ -26,12 +26,12 @@ except ImportError:
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 11  # horizon length
+T = 20  # horizon length #t =11 circle, t = 20 lemniscate
 
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
 Rd = np.diag([0.01, 2.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 1.0, 0.5])  # state cost matrix
+Q = np.diag([10.0, 10.0, 5.0, 0.5])  # state cost matrix # Q = np.diag([1.0, 1.0, 1.0, 0.5])-circle #Q = np.diag([10.0, 10.0, 5.0, 0.5])- lemniscate
 Qf = Q  # state final matrix
 GOAL_DIS = 0.08  # position tolerance to the final waypoint [m] #uncomment
 STOP_SPEED = 0.0  # stop speed #uncomment
@@ -318,7 +318,6 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     for i in range(1, T + 1):
         travel += abs(state.v) * DT
         dind = int(round(travel / dl))
-        print(f"[xref] v={state.v:.3f} dind={dind} travel={travel:.4f} dl={dl}")
 
         if (ind + dind) < ncourse:
             xref[0, i] = cx[ind + dind]

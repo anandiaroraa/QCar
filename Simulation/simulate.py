@@ -42,9 +42,9 @@ except ImportError:
     )
     from trajectory import get_trajectory
     from live_plotter import LivePlotter
-# ── Simulation configuration ─────────────────────────────────────────────────
-TRAJECTORY_TYPE = "circle"   # "circle" or "straight"
-CLOCKWISE       = True
+# ── Simulation configuration 
+TRAJECTORY_TYPE = "lemniscate"   # "circle", "straight", or "lemniscate"
+CLOCKWISE       = True           # only used for "circle"
 
 # Car starting pose (world frame)
 START_X   = 0.0   # [m]
@@ -53,7 +53,6 @@ START_YAW = 0.0   # [rad]  (0 = pointing in +x direction)
 
 SAVE_GIF    = True
 SAVE_RESULTS = True
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _build_trajectory(trajectory_type, clockwise, start_x, start_y, start_yaw,
@@ -95,6 +94,39 @@ def _build_trajectory(trajectory_type, clockwise, start_x, start_y, start_yaw,
         ck.append(ck[0])
         cyaw = smooth_yaw(cyaw)
 
+    elif trajectory_type == "lemniscate":
+        scale = radius  # reuse radius param as the figure-8 half-width
+        # Place the crossing point so the car starts at the tangent-aligned
+        # entry of the right lobe.  At that entry the lemniscate tangent is
+        # exactly parallel to start_yaw, giving zero initial heading error.
+        # Offset from lemniscate center to the entry point (unrotated frame):
+        #   Δx = -√6/4·scale,  Δy = +√2/4·scale
+        # so center = start - R(start_yaw)·(Δx, Δy):
+        C6 = math.sqrt(6.0) / 4.0  # ≈ 0.612
+        C2 = math.sqrt(2.0) / 4.0  # ≈ 0.354
+        cos_y, sin_y = math.cos(start_yaw), math.sin(start_yaw)
+        center_x = start_x + scale * ( C6 * cos_y + C2 * sin_y)
+        center_y = start_y + scale * ( C6 * sin_y - C2 * cos_y)
+
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "lemniscate",
+            scale=scale, ds=dl,
+            center_x=center_x, center_y=center_y,
+            start_angle=start_yaw,
+        )
+
+        # Roll so index 0 is the waypoint closest to the car's start
+        min_dist, start_idx = float("inf"), 0
+        for i in range(len(cx)):
+            d = math.hypot(cx[i] - start_x, cy[i] - start_y)
+            if d < min_dist:
+                min_dist, start_idx = d, i
+        cx   = np.roll(cx,   -start_idx).tolist()
+        cy   = np.roll(cy,   -start_idx).tolist()
+        cyaw = np.roll(cyaw, -start_idx).tolist()
+        ck   = np.roll(ck,   -start_idx).tolist()
+        cyaw = smooth_yaw(cyaw)
+
     else:  # straight
         center_x, center_y = start_x, start_y
         cx, cy, cyaw, ck, _ = get_trajectory(
@@ -126,7 +158,7 @@ def run_simulation(
     cx, cy, cyaw, ck, center_x, center_y = _build_trajectory(
         trajectory_type, clockwise, start_x, start_y, start_yaw, radius, dl
     )
-    print(f"[sim] Circle center: ({center_x:.3f}, {center_y:.3f})")
+    print(f"[sim] Path center/origin: ({center_x:.3f}, {center_y:.3f})")
     print(f"[sim] Waypoints: {len(cx)}")
 
     sp = calc_speed_profile(cx, cy, cyaw, target_speed=target_speed)
@@ -147,6 +179,7 @@ def run_simulation(
 
     target_ind = 0
     oa, odelta = None, None
+    accel, steer = 0.0, 0.0   # safe defaults; held on MPC infeasibility
     t_sim      = 0.0
     history    = []   # [x, y, yaw, v, steer, accel, t_sim]
 
@@ -178,9 +211,9 @@ def run_simulation(
         )
 
         if oa is None or odelta is None:
-            print(f"[sim] MPC infeasible at t={t_sim:.2f}s — holding last command")
+            print(f"[sim] MPC infeasible at t={t_sim:.2f}s - holding last command")
             ox, oy = None, None
-            accel, steer = 0.0, 0.0
+            # accel, steer keep their values from the previous iteration
         else:
             accel = float(oa[0])
             steer = float(odelta[0])
@@ -207,6 +240,21 @@ def run_simulation(
         print(f"[sim] max_time ({max_time}s) reached")
 
     plotter.close()
+
+    if history:
+        hist_arr = np.array(history)         # shape (N, 7)
+        cx_arr   = np.array(cx)
+        cy_arr   = np.array(cy)
+        # cross-track error: distance from each recorded position to the nearest waypoint
+        cte = np.array([
+            np.min(np.hypot(cx_arr - hx, cy_arr - hy))
+            for hx, hy in zip(hist_arr[:, 0], hist_arr[:, 1])
+        ])
+        print(f"[sim] Cross-track error (m) | "
+              f"mean={np.mean(cte):.4f}  "
+              f"std={np.std(cte):.4f}  "
+              f"max={np.max(cte):.4f}  "
+              f"RMS={np.sqrt(np.mean(cte**2)):.4f}")
 
     tag = f"sim_{trajectory_type}_{'cw' if clockwise else 'ccw'}_{time.strftime('%Y%m%d_%H%M%S')}"
 

@@ -34,43 +34,23 @@ from .live_plotter import LivePlotter
 
 #REACHED_GOAL = 8
 
-class _Pose():
-    def __init__(self):
-        self.reset()
 from .trajectory import get_trajectory
 
-from geometry_msgs.msg import(
-    PoseStamped,
-)
-#from nav_msgs.msg import Path
-#import rospy
-
-#REACHED_GOAL = 8
-
 class _Pose():
     def __init__(self):
         self.reset()
-    def reset(self): 
+    def reset(self):
         self.x = 0
         self.y = 0
         self.theta = 0.0
         self.quat = [0, 0, 0, 1]
         self.worldx = 0
         self.worldy = 0
-        #added pose received flag + speed estimate 
         self.received = False
         self.v = 0.0
         self._last_x = None
         self._last_y = None
         self._last_t = None
-
-def data2mpc(x, y, theta, v):
-    pass
-    return [x, y, v, theta]
-
-def mpc2data(x, y, theta, v):
-    pass
-    return [x, y, theta, v]
 
 class Data():
     def __init__(self):
@@ -310,9 +290,11 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
 
     oa, odelta = None, None
-    #added this
-    #TO DO: remove? not the way to change velocity
-    # data.car1.v = MIN_SPEED #starting should be a little warm
+    # v_cmd tracks the commanded speed by integrating the MPC acceleration output,
+    # exactly as the bicycle model does in simulation.  This avoids feeding noisy
+    # NatNet position-difference velocity into the speed command each tick.
+    v_cmd = MIN_SPEED
+    steer1, speed1 = 0.0, MIN_SPEED  # safe defaults if first MPC solve fails
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
     print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
@@ -321,13 +303,11 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     plotter = LivePlotter(cx, cy, cyaw, title=run_label)
     ####
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
-        #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
-        #added-clamping the velocity
         state = State(
-        x=data.car1.x,
-        y=data.car1.y,
-        yaw=data.car1.theta,
-        v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
+            x=data.car1.x,
+            y=data.car1.y,
+            yaw=data.car1.theta,
+            v=v_cmd,  # use smooth tracked speed, not noisy NatNet estimate
         )
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
         ####added for termination based on progress along the path
@@ -378,17 +358,22 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         ####
 
         if oa is None or odelta is None:
-            steer1, speed1 = 0.0, 0.0
-            ####adde for live plotting to not error out when MPC fails
-            ox, oy = None, None
+                print(f"[publish] MPC infeasible at t={time.time()-start_time:.2f}s — holding last command")
+                ox, oy = None, None
+                # steer1 / speed1 keep their values from the previous iteration
         else:
-            a_cmd = float(oa[0])                  # accel output
-            steer1 = float(odelta[0])            # steer output
-            # steer1 = np.deg2rad (-7.0)
-            speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
+                a_cmd  = float(oa[0])
+                steer1 = float(odelta[0])
+                v_cmd  = float(np.clip(v_cmd + a_cmd * DT, MIN_SPEED, MAX_SPEED))
+                speed1 = v_cmd
 
         steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
         speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
+
+        # ── TRIM CHECK ── uncomment one line, drive a straight, observe drift ──
+        # steer1 = 0.0                        # raw zero: should go straight if trim=0
+        # steer1 = float(STEER_TRIM)          # current trim: should go straight if trim is right
+        # ────────────────────────────────────────────────────────────────────────
 
         drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
         drive_msg1 = AckermannDriveStamped()
