@@ -19,6 +19,7 @@ from .mpcspeed_steercontrol import (
     calc_speed_profile,
     smooth_yaw,
     GOAL_DIS,
+    STEER_TRIM,
 )
 
 from .qcar_params import MAX_SPEED, MAX_TIME, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, DS, LENGTH
@@ -82,6 +83,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     #rospy.init_node("qcar_ros", anonymous=True)
     if not rospy.core.is_initialized():
         rospy.init_node("qcar_ros", anonymous=True)
+    print(f"[publish] running file: {__file__}")
+    print(f"[publish] STEER_TRIM={math.degrees(float(STEER_TRIM)):.2f}deg")
     # obs = sim_env.set_init_states()
     data = Data()
     get_car1_pose = rospy.Subscriber("/natnet_ros/RigidBody1/pose", PoseStamped, data.update_car1_pose)
@@ -178,7 +181,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         
     #added my mpc
     cfg = path_tracking_config or {}
-    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
+    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle", "straight", or "lemniscate"
     radius = float(cfg.get("radius", RADIUS))
     dl = float(cfg.get("ds", DS))
     # # center_x = float(cfg.get("center_x", data.car1.x))
@@ -235,6 +238,28 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         ####
 
         # target index is initialized below using nearest waypoint search
+    elif trajectory_type == "lemniscate":
+        lemniscate_scale = float(cfg.get("scale", RADIUS))
+        start_angle = cfg.get("start_angle", -math.pi/2 if clockwise else math.pi/2)
+        print(f"Lemniscate: scale={lemniscate_scale:.1f}m, start_angle={start_angle:.3f}rad")
+        
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "lemniscate",
+            scale=lemniscate_scale,
+            ds=dl,
+            center_x=data.car1.x,
+            center_y=data.car1.y,
+            start_angle=start_angle
+        )
+        center_x = data.car1.x
+        center_y = data.car1.y
+        
+        # Close the lemniscate trajectory (append start point to end for complete figure-8)
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + 2.0 * math.pi)  # full rotation for figure-8
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
         start_angle = data.car1.theta
@@ -297,7 +322,6 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     steer1, speed1 = 0.0, MIN_SPEED  # safe defaults if first MPC solve fails
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
-    print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
     ####added for live plotting
     run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
     plotter = LivePlotter(cx, cy, cyaw, title=run_label)
@@ -459,7 +483,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
+                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,

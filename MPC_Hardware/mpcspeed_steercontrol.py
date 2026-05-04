@@ -21,19 +21,19 @@ from .qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL,
 #from utils.angle import angle_mod
 # from .utils import angle_mod
 #from PathPlanning.CubicSpline import cubic_spline_planner 
-from .trajectory import get_trajectory, calc_circle_course
+from .trajectory import get_trajectory, calc_circle_course, calc_lemniscate_course
 # from .cubic_spline_plannar import calc_spline_course
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 11  # horizon length
+T = 25  # horizon length
 
 # mpc parameters
 R = np.diag([0.001, 0.001])  # input cost matrix
-Rd = np.diag([0.01, 2.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 1.0, 0.5])  # state cost matrix
+Rd = np.diag([0.01, 5.0])  # input difference cost matrix
+Q = np.diag([1.0, 1.0, 0.8, 1.25])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 0.08  # position tolerance to the final waypoint [m] #uncomment
+GOAL_DIS = 0.01  # position tolerance to the final waypoint [m] #uncomment
 STOP_SPEED = 0.0  # stop speed #uncomment
 # MAX_TIME = 500.0  # max simulation time
 
@@ -89,8 +89,7 @@ def build_initial_state(cx, cy, cyaw, live_pose=None):
         x=float(getattr(live_pose, "x", cx[0])),
         y=float(getattr(live_pose, "y", cy[0])),
         yaw=float(yaw),
-        v=float(np.clip(speed, MIN_SPEED, MAX_SPEED)),
-    )
+        v=float(speed))
 
 def pi_2_pi(angle):
     return (angle + math.pi) % (2 * math.pi) - math.pi
@@ -143,8 +142,8 @@ def update_state(state, a, delta):
 
     if state.v > MAX_SPEED:
         state.v = MAX_SPEED
-    elif state.v < MIN_SPEED:
-        state.v = MIN_SPEED
+    elif state.v < 0.01:
+        state.v = 0.0
 
     return state
 
@@ -555,7 +554,7 @@ def main(live_pose=None):
     dl = 0.1
     
     #SWITCH TRAJECTORY
-    trajectory_type = "circle"  # ← Change to "straight" for straight line 
+    trajectory_type = "lemniscate"  # ← Change to "straight" or "lemniscate" for other trajectories
     #switch for cw or ccw
     clockwise = True
     
@@ -567,6 +566,15 @@ def main(live_pose=None):
             center_x=0.0,
             center_y=0.0,
             direction_sign=-1 if clockwise else 1
+        )
+    elif trajectory_type == "lemniscate":
+        cx, cy, cyaw, ck, s = get_trajectory(
+            "lemniscate",
+            scale=RADIUS,
+            ds=dl,
+            center_x=0.0,
+            center_y=0.0,
+            start_angle=-math.pi/2 if clockwise else math.pi/2
         )
     else:  # straight
         cx, cy, cyaw, ck, s = get_trajectory(

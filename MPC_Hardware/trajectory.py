@@ -139,13 +139,88 @@ def calc_circle_course(radius=RADIUS, ds=DS, center_x=0.0, center_y=0.0, directi
 
     return rx.tolist(), ry.tolist(), ryaw.tolist(), rk.tolist(), s.tolist()
 
+def calc_lemniscate_course(scale=RADIUS, ds=DS, center_x=0.0, center_y=0.0, start_angle=0.0, laps=1.0):
+    """
+    Lemniscate of Bernoulli (figure-8) path.
 
-def get_trajectory(trajectory_type="circle", **kwargs):
+    Parametric form (before rotation/translation):
+        x(t) = scale * cos(t) / (1 + sin²t)
+        y(t) = scale * sin(t)*cos(t) / (1 + sin²t)   for t ∈ [0, 2π)
+
+    The curve self-intersects at (center_x, center_y) and each lobe tip is
+    'scale' metres from the center along the x-axis (before rotation).
+
+    Args:
+        scale       : half-width of the figure-8 [m]; lobe tip is 'scale' from center
+        ds          : arc-length spacing between waypoints [m]
+        center_x    : world-frame x of the crossing point
+        center_y    : world-frame y of the crossing point
+        start_angle : rotation of the whole figure around the crossing point [rad]
+        laps        : number of complete figure-8 laps to generate
+
+    Returns:
+        rx, ry, ryaw, rk, s : lists of x, y, yaw [rad], curvature [1/m], arc-length [m]
+    """
+    if scale <= 0:
+        raise ValueError("scale must be > 0")
+    if ds <= 0:
+        raise ValueError("ds must be > 0")
+    if laps <= 0:
+        raise ValueError("laps must be > 0")
+
+    # Start at the self-intersection so the car begins at the meeting point.
+    t_start = math.pi / 2.0
+    N_DENSE = max(8000, int(math.ceil(8000 * laps)))
+    t = np.linspace(t_start, t_start + 2.0 * math.pi * laps, N_DENSE, endpoint=False)
+    denom = 1.0 + np.sin(t) ** 2
+    x = scale * np.cos(t) / denom
+    y = scale * np.sin(t) * np.cos(t) / denom
+
+    # Rotate around the crossing point
+    if start_angle != 0.0:
+        ca, sa = math.cos(start_angle), math.sin(start_angle)
+        x, y = ca * x - sa * y, sa * x + ca * y
+
+    # Translate to requested center
+    x = x + center_x
+    y = y + center_y
+
+    # Arc length: close the loop (last point → first point) for correct total
+    x_cl = np.append(x, x[0])
+    y_cl = np.append(y, y[0])
+    seg = np.hypot(np.diff(x_cl), np.diff(y_cl))
+    s_dense = np.concatenate([[0.0], np.cumsum(seg)])
+    total_length = float(s_dense[-1])
+
+    # Resample to uniform arc-length spacing (open loop)
+    n_points = int(total_length / ds) + 1
+    # n_points = max(10, int(total_length / ds) + 1)
+    s_uniform = np.linspace(0.0, total_length, n_points, endpoint=False)
+    rx = np.interp(s_uniform, s_dense, x_cl)
+    ry = np.interp(s_uniform, s_dense, y_cl)
+
+    # Yaw: forward-difference tangent (wrap-around for a closed curve)
+    dx_fwd = np.roll(rx, -1) - rx
+    dy_fwd = np.roll(ry, -1) - ry
+    ryaw = np.arctan2(dy_fwd, dx_fwd)
+
+    # Curvature via central-difference: κ = (x'y'' − y'x'') / speed³
+    dx_u = np.gradient(rx)
+    dy_u = np.gradient(ry)
+    d2x_u = np.gradient(dx_u)
+    d2y_u = np.gradient(dy_u)
+    speed = np.hypot(dx_u, dy_u)
+    rk = (dx_u * d2y_u - dy_u * d2x_u) / (speed ** 3 + 1e-10)
+
+    return rx.tolist(), ry.tolist(), ryaw.tolist(), rk.tolist(), s_uniform.tolist()
+
+
+def get_trajectory(trajectory_type="lemniscate", **kwargs):
     """
     Unified trajectory selector.
     
     Args:
-        trajectory_type: "circle" or "straight"
+        trajectory_type: "circle", "straight", or "lemniscate"
         **kwargs: trajectory-specific parameters
         
     Circle parameters:
@@ -161,6 +236,13 @@ def get_trajectory(trajectory_type="circle", **kwargs):
         - start_x: Start x (default 0.0)
         - start_y: Start y (default 0.0)
         - angle: Heading angle in radians (default 0.0)
+
+    Lemniscate parameters:
+        - scale: Half-width of the figure-8 in metres (default from qcar_params.RADIUS)
+        - ds: Arc length spacing (default from qcar_params.DS)
+        - center_x: x of the crossing point (default 0.0)
+        - center_y: y of the crossing point (default 0.0)
+        - start_angle: rotation of the figure around the crossing point [rad] (default 0.0)
     
     Returns:
         rx, ry, ryaw, rk, s: Lists of x, y, yaw, curvature, arc length
@@ -181,8 +263,17 @@ def get_trajectory(trajectory_type="circle", **kwargs):
             start_y=kwargs.get("start_y", 0.0),
             angle=kwargs.get("angle", 0.0)
         )
+    elif trajectory_type.lower() == "lemniscate":
+        rx, ry, ryaw, rk, s = calc_lemniscate_course(
+            scale=kwargs.get("scale", RADIUS),
+            ds=kwargs.get("ds", DS),
+            center_x=kwargs.get("center_x", 0.0),
+            center_y=kwargs.get("center_y", 0.0),
+            start_angle=kwargs.get("start_angle", 0.0),
+            laps=kwargs.get("laps", 1.0),
+        )
     else:
-        raise ValueError(f"Unknown trajectory_type: {trajectory_type}. Use 'circle' or 'straight'")
+        raise ValueError(f"Unknown trajectory_type: {trajectory_type}. Use 'circle', 'straight', or 'lemniscate'")
 
     if kwargs.get("debug_plot", False):
         plot_title = kwargs.get("plot_title", f"{trajectory_type.capitalize()} trajectory")
@@ -192,6 +283,16 @@ def get_trajectory(trajectory_type="circle", **kwargs):
 
 if __name__ == "__main__":
     # Example usage
+    lemniscate_rx, lemniscate_ry, lemniscate_ryaw, lemniscate_rk, lemniscate_s = get_trajectory(
+        trajectory_type="lemniscate",
+        scale=RADIUS,
+        ds=DS,
+        center_x=0.0,
+        center_y=0.0,
+        start_angle=0.0,
+        debug_plot=True,
+        plot_title="Generated Lemniscate Trajectory"
+    )
     circle_rx, circle_ry, circle_ryaw, circle_rk, circle_s = get_trajectory(
         trajectory_type="circle",
         radius=RADIUS,

@@ -114,6 +114,7 @@ class LivePlotter:
         self._hist_x   = []
         self._hist_y   = []
         self._gif_frames = []
+        self._gif_frame_times = []
 
         # ── figure setup on the main thread ──
         plt.ion()
@@ -176,7 +177,8 @@ class LivePlotter:
                ox=None, oy=None,
                xref=None,
                target_ind=None,
-               elapsed_time=0.0):
+               elapsed_time=0.0,
+               force=False):
         """
         Call this once per MPC iteration (inside your control loop).
         Updates the live window on the main thread.
@@ -199,7 +201,7 @@ class LivePlotter:
         self._latest = payload
 
         now = time.time()
-        if now - self._last_draw_time >= self._min_dt:
+        if force or now - self._last_draw_time >= self._min_dt:
             self._redraw(payload)
             self._last_draw_time = now
             try:
@@ -214,22 +216,35 @@ class LivePlotter:
         except Exception:
             pass
 
-    def save(self, filepath="live_plot_final.gif"):
-        """Save the current figure to disk (call after close())."""
+    def save(self, filepath="live_plot_final.gif", extra_seconds=3.0):
+        """Save the current figure to disk (call after close()).
+
+        extra_seconds adds a frozen tail at the end of the GIF.
+        """
         if filepath.lower().endswith(".gif"):
             if not self._gif_frames:
                 print("[LivePlotter] no frames captured, nothing to save")
                 return
             try:
+                frames = list(self._gif_frames)
+                if len(self._gif_frame_times) == len(frames) and len(frames) > 1:
+                    durations = []
+                    for t0, t1 in zip(self._gif_frame_times[:-1], self._gif_frame_times[1:]):
+                        dt_ms = int(round((t1 - t0) * 1000.0))
+                        durations.append(max(20, dt_ms))
+                    durations.append(self._gif_frame_duration_ms)
+                else:
+                    durations = [self._gif_frame_durations_ms] * len(frames)
+                if extra_seconds and extra_seconds > 0:
+                    durations[-1] += int(round(extra_seconds * 1000.0))
                 self._gif_frames[0].save(
                     filepath,
                     save_all=True,
-                    append_images=self._gif_frames[1:],
-                    loop=0,
-                    duration=self._gif_frame_duration_ms,
+                    append_images=frames[1:],
+                    duration=durations,
                     optimize=False,
                 )
-                print(f"[LivePlotter] GIF saved → {filepath}  ({len(self._gif_frames)} frames)")
+                print(f"[LivePlotter] GIF saved → {filepath}  ({len(frames)} frames, +{extra_seconds:.1f}s tail)")
             except Exception as e:
                 print(f"[LivePlotter] GIF save failed: {e}")
         else:
@@ -296,5 +311,6 @@ class LivePlotter:
             self._fig.canvas.flush_events()
             frame = np.asarray(self._fig.canvas.buffer_rgba(), dtype=np.uint8)[..., :3].copy()
             self._gif_frames.append(Image.fromarray(frame))
+            self._gif_frame_times.append(float(d["elapsed_time"]))
         except Exception:
             pass

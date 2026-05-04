@@ -34,14 +34,14 @@ from .live_plotter import LivePlotter
 
 #REACHED_GOAL = 8
 
-class _Pose():
-    def __init__(self):
-        self.reset()
+# class _Pose():
+#     def __init__(self):
+#         self.reset()
 from .trajectory import get_trajectory
 
-from geometry_msgs.msg import(
-    PoseStamped,
-)
+# from geometry_msgs.msg import(
+#     PoseStamped,
+# )
 #from nav_msgs.msg import Path
 #import rospy
 
@@ -198,7 +198,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         
     #added my mpc
     cfg = path_tracking_config or {}
-    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle" or "straight"
+    trajectory_type = cfg.get("trajectory_type", "circle")  # "circle", "straight", or "lemniscate"
     radius = float(cfg.get("radius", RADIUS))
     dl = float(cfg.get("ds", DS))
     # # center_x = float(cfg.get("center_x", data.car1.x))
@@ -255,6 +255,30 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         ####
 
         # target index is initialized below using nearest waypoint search
+    elif trajectory_type == "lemniscate":
+        lemniscate_scale = float(cfg.get("scale", RADIUS))
+        lemniscate_laps = float(cfg.get("laps", 1.0))
+        start_angle = cfg.get("start_angle", data.car1.theta + 3.0 * math.pi / 4.0)
+        print(f"Lemniscate: scale={lemniscate_scale:.1f}m, laps={lemniscate_laps:.1f}, start_angle={start_angle:.3f}rad")
+        
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "lemniscate",
+            scale=lemniscate_scale,
+            ds=dl,
+            center_x=data.car1.x,
+            center_y=data.car1.y,
+            start_angle=start_angle,
+            laps=lemniscate_laps
+        )
+        center_x = data.car1.x
+        center_y = data.car1.y
+        
+        # Close the lemniscate trajectory (append start point to end for complete figure-8)
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + 2.0 * math.pi)  # full rotation for figure-8
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
         start_angle = data.car1.theta
@@ -268,8 +292,9 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             start_y=data.car1.y,
             angle=start_angle
         )
-        center_x = data.car1.x
-        center_y = data.car1.y
+    print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
+        # center_x = data.car1.x
+        # center_y = data.car1.y
     
     print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
     print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
@@ -327,17 +352,35 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         x=data.car1.x,
         y=data.car1.y,
         yaw=data.car1.theta,
-        v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED))
+        v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED)) 
         )
         xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
         ####added for termination based on progress along the path
         path_progress = path_s[min(target_ind, len(path_s) - 1)]
         path_remaining = path_length - path_progress
+
+        #print table with error in x, y, yaw, v using state and xref
+        print(f"error: ex={state.x - xref[0, 0]:.3f}, ey={state.y - xref[1, 0]:.3f}, eyaw={state.yaw - xref[3, 0]:.3f}, ev={state.v - xref[2, 0]:.3f}")
+        print(f"target_ind={target_ind}, path_progress={path_progress:.3f}m, path_remaining={path_remaining:.3f}m")
+        print()        
         if target_ind >= len(cx) - 1 or path_remaining <= end_progress_margin:
             print(
                 f"Path complete: target_ind={target_ind}/{len(cx) - 1}, "
                 f"progress={path_progress:.3f}m/{path_length:.3f}m, "
                 f"remaining={path_remaining:.3f}m"
+            )
+            car1_history.append([state.x, state.y, state.yaw, state.v, 0.0, 0.0, time.time()])
+            plotter.update(
+                state_x      = state.x,
+                state_y      = state.y,
+                state_yaw    = state.yaw,
+                state_v      = state.v,
+                ox           = None,
+                oy           = None,
+                xref         = xref,
+                target_ind   = target_ind,
+                elapsed_time = time.time() - start_time,
+                force        = True,
             )
             break
 
@@ -426,10 +469,9 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         rospy.sleep(0.05)
 
     #####added for live plotting
-    plotter.close()
-   
     save_name = f"live_plot_{trajectory_type}_{time.strftime('%Y%m%d_%H%M%S')}.gif"
-    plotter.save(save_name)
+    plotter.save(save_name, extra_seconds=3.0)
+    plotter.close()
     #####
     # ADD: Calculate execution time and get original path
     execution_time = time.time() - start_time
@@ -474,7 +516,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "circle",  # ← Change to "straight" for straight line
+                    "trajectory_type": "lemniscate",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,

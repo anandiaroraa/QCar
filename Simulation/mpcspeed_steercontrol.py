@@ -59,8 +59,11 @@ MAX_DSTEER = MAX_DSTEER # maximum steering speed [rad/s]
 MAX_SPEED = MAX_SPEED  # maximum speed [m/s]
 MIN_SPEED = MIN_SPEED # minimum speed [m/s]
 MAX_ACCEL = MAX_ACCEL
-####steering fixed
-STEER_TRIM = np.deg2rad(-7.0)
+#### steering trim
+# AckermannDrive.steering_angle is a steering-angle command, so 0.0 should
+# mean straight.  Keep this at 0 unless the ROS driver explicitly expects a
+# calibrated servo offset in this field.
+STEER_TRIM = 0.0
 
 show_animation = False  # simulation
 
@@ -554,7 +557,7 @@ def main(live_pose=None):
     dl = 0.1
     
     #SWITCH TRAJECTORY
-    trajectory_type = "circle"  # ← Change to "straight" for straight line 
+    trajectory_type = "straight"  # ← Change to "circle" or "lemniscate" for other trajectories 
     #switch for cw or ccw
     clockwise = True
     
@@ -566,6 +569,15 @@ def main(live_pose=None):
             center_x=0.0,
             center_y=0.0,
             direction_sign=-1 if clockwise else 1
+        )
+    elif trajectory_type == "lemniscate":
+        cx, cy, cyaw, ck, s = get_trajectory(
+            "lemniscate",
+            scale=RADIUS,
+            ds=dl,
+            center_x=0.0,
+            center_y=0.0,
+            start_angle=-math.pi/2 if clockwise else math.pi/2
         )
     else:  # straight
         cx, cy, cyaw, ck, s = get_trajectory(

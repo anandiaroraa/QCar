@@ -43,7 +43,7 @@ except ImportError:
     from trajectory import get_trajectory
     from live_plotter import LivePlotter
 # ── Simulation configuration 
-TRAJECTORY_TYPE = "lemniscate"   # "circle", "straight", or "lemniscate"
+TRAJECTORY_TYPE = "straight"   # "circle", "straight", or "lemniscate"
 CLOCKWISE       = True           # only used for "circle"
 
 # Car starting pose (world frame)
