@@ -7,8 +7,8 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, script_dir)
 
-from MPC_Hardware.qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, MAX_TIME, DS
-from MPC_Hardware.mpcspeed_steercontrol import T, R, Q, Rd, Qf
+from MPC_Hardware2.qcar_params import MAX_SPEED, MIN_SPEED, MAX_STEER, MAX_DSTEER, MAX_ACCEL, DT, WB, RADIUS, TARGET_SPEED, MAX_TIME, DS
+from MPC_Hardware2.mpcspeed_steercontrol import T, R, Q, Rd, Qf
 
 npz_pattern = os.path.join(script_dir, 'hardware_results_test1', '*.npz')
 files = sorted(glob.glob(npz_pattern), key=os.path.getmtime)

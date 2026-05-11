@@ -8,7 +8,7 @@ import numpy as np
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, script_dir)
 
-from MPC_Hardware.qcar_params import (  # noqa: E402
+from MPC_Hardware2.qcar_params import (  # noqa: E402
     MAX_DSTEER,
     MAX_SPEED,
     MAX_STEER,
@@ -19,7 +19,7 @@ from MPC_Hardware.qcar_params import (  # noqa: E402
 )
 
 
-npz_pattern = os.path.join(script_dir, "hardware_results_test1", "*.npz")
+npz_pattern = os.path.join(script_dir, "hardware_results_test_qcar21", "*.npz")
 files = sorted(glob.glob(npz_pattern), key=os.path.getmtime)
 if not files:
     raise FileNotFoundError(f"No .npz files found for pattern: {npz_pattern}")

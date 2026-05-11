@@ -511,7 +511,7 @@ if __name__ == "__main__":
     
     # Create directory for results
     for test_case in test_cases:
-        results_dir = f'hardware_results_test{test_case}' #change to hardware_results_test_straight
+        results_dir = f'hardware_results_qcar{test_case}' #change to hardware_results_test_straight
         os.makedirs(results_dir, exist_ok=True)
         try:
             #SWITCH TRAJECTORY 
