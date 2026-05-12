@@ -19,7 +19,7 @@ from MPC_Hardware2.qcar_params import (  # noqa: E402
 )
 
 
-npz_pattern = os.path.join(script_dir, "hardware_results_test_qcar21", "*.npz")
+npz_pattern = os.path.join(script_dir, "hardware_results_qcar1", "*.npz")
 files = sorted(glob.glob(npz_pattern), key=os.path.getmtime)
 if not files:
     raise FileNotFoundError(f"No .npz files found for pattern: {npz_pattern}")
