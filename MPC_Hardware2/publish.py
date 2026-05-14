@@ -10,7 +10,6 @@ from .utils import quat2euler
 import numpy as np
 import rospy
 from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
-from std_msgs.msg import Bool
 #from scipy.spatial.transform import Rotation as R
 #added goal_dist
 from .mpcspeed_steercontrol import (
@@ -65,24 +64,6 @@ class _Pose():
         self._last_y = None
         self._last_t = None
 
-class _ReadyFlag():
-    def __init__(self):
-        self.ready = False
-
-    def update(self, msg):
-        self.ready = bool(msg.data)
-
-class _CenterPose():
-    def __init__(self):
-        self.received = False
-        self.x = 0.0
-        self.y = 0.0
-
-    def update(self, msg):
-        self.x = float(msg.pose.position.x)
-        self.y = float(msg.pose.position.y)
-        self.received = True
-
 def data2mpc(x, y, theta, v):
     pass
     return [x, y, v, theta]
@@ -128,15 +109,6 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     
     give_command1 = rospy.Publisher("/qcar2/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
     ref_pose_pub = rospy.Publisher("/mpc/reference_pose", PoseStamped, queue_size=1)
-    peer_ready = _ReadyFlag()
-    peer_subscribed = _ReadyFlag()
-    shared_center = _CenterPose()
-    subscribed_pub = rospy.Publisher("/mpc/qcar2_subscribed", Bool, queue_size=1, latch=True)
-    subscribed_sub = rospy.Subscriber("/mpc/qcar1_subscribed", Bool, peer_subscribed.update)
-    ready_pub = rospy.Publisher("/mpc/qcar2_ready", Bool, queue_size=1, latch=True)
-    ready_sub = rospy.Subscriber("/mpc/qcar1_ready", Bool, peer_ready.update)
-    center_sub = rospy.Subscriber("/mpc/lemniscate_center", PoseStamped, shared_center.update)
-    subscribed_pub.publish(Bool(data=True))
 
     car1_history = []
 
@@ -229,7 +201,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     trajectory_type = cfg.get("trajectory_type", "circle")  # "circle", "straight", or "lemniscate"
     radius = float(cfg.get("radius", RADIUS))
     dl = float(cfg.get("ds", DS))
-    start_offset = int(cfg.get("start_offset_steps", 10))  # car pose index relative to crossing ref[0]
+    start_offset = int(cfg.get("start_offset_steps", 10))  # offset in steps from closest waypoint
     # # center_x = float(cfg.get("center_x", data.car1.x))
     # # center_y = float(cfg.get("center_y", data.car1.y))
     direction_cfg = cfg.get("circle_direction")
@@ -269,6 +241,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             if d < min_dist:
                 min_dist = d
                 start_idx = i
+        start_idx = (start_idx + start_offset) % len(cx)
 
         cx   = np.roll(cx,   -start_idx).tolist()
         cy   = np.roll(cy,   -start_idx).tolist()
@@ -287,66 +260,26 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     elif trajectory_type == "lemniscate":
         lemniscate_scale = float(cfg.get("scale", RADIUS))
         lemniscate_laps = float(cfg.get("laps", 1.0))
-        start_angle = float(cfg.get("start_angle", math.pi / 2.0))
+        start_angle = cfg.get("start_angle", data.car1.theta + 3.0 * math.pi / 4.0)
+        print(f"Lemniscate: scale={lemniscate_scale:.1f}m, laps={lemniscate_laps:.1f}, start_angle={start_angle:.3f}rad")
+        
         cx, cy, cyaw, ck, _ = get_trajectory(
             "lemniscate",
             scale=lemniscate_scale,
             ds=dl,
-            center_x=0.0,
-            center_y=0.0,
+            center_x=data.car1.x,
+            center_y=data.car1.y,
             start_angle=start_angle,
             laps=lemniscate_laps
         )
-        if str(cfg.get("lemniscate_direction", "up")).lower() == "up":
-            cx = [cx[0]] + cx[:0:-1]
-            cy = [cy[0]] + cy[:0:-1]
-            ck = [-ck[0]] + [-k for k in ck[:0:-1]]
-            cyaw = [
-                math.atan2(cy[(i + 1) % len(cy)] - cy[i], cx[(i + 1) % len(cx)] - cx[i])
-                for i in range(len(cx))
-            ]
-        start_idx = start_offset % len(cx)
-        if "center_x" in cfg and "center_y" in cfg:
-            center_x = float(cfg["center_x"])
-            center_y = float(cfg["center_y"])
-        else:
-            print("QCar2 waiting for shared lemniscate center from QCar1...")
-            center_wait_rate = rospy.Rate(10)
-            while not rospy.is_shutdown() and not shared_center.received:
-                center_wait_rate.sleep()
-            center_x = shared_center.x
-            center_y = shared_center.y
-            print(f"QCar2 received shared center: ({center_x:.3f}, {center_y:.3f})")
-        cx = (np.array(cx) + center_x).tolist()
-        cy = (np.array(cy) + center_y).tolist()
-        start_dist = math.hypot(cx[start_idx] - data.car1.x, cy[start_idx] - data.car1.y)
-        crossing_dist = math.hypot(cx[0] - data.car1.x, cy[0] - data.car1.y)
-        print(
-            f"Lemniscate: scale={lemniscate_scale:.1f}m, laps={lemniscate_laps:.1f}, "
-            f"start_angle={start_angle:.3f}rad"
-        )
-        print(
-            f"Base lemniscate crossing is ref[0]; car starts at base ref[{start_idx}] "
-            f"({start_offset:+d} steps from crossing), "
-            f"start_dist={start_dist:.3f}m, crossing_dist={crossing_dist:.3f}m"
-        )
-
-        base_cx = cx
-        base_cy = cy
-        base_cyaw = cyaw
-        base_ck = ck
-        n_base = len(base_cx)
-        order = list(range(start_idx, n_base)) + list(range(0, start_idx + 1))
-        cx = [base_cx[i] for i in order]
-        cy = [base_cy[i] for i in order]
-        cyaw = [base_cyaw[i] for i in order]
-        ck = [base_ck[i] for i in order]
-        crossing_idx = (n_base - start_idx) % n_base
-        print(
-            f"QCar2 tracks one same-length closed lemniscate from its start; "
-            f"crossing_idx={crossing_idx}, waypoints={len(cx)}"
-        )
+        center_x = data.car1.x
+        center_y = data.car1.y
         
+        # Close the lemniscate trajectory (append start point to end for complete figure-8)
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + 2.0 * math.pi)  # full rotation for figure-8
+        ck.append(ck[0])
         cyaw = smooth_yaw(cyaw)
     else:  # straight
         straight_length = float(cfg.get("length", LENGTH))
@@ -389,12 +322,15 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             f"yawref={float(cyaw[i]):.3f}, kref={float(ck[i]):.4f}, vref={float(sp[i]):.3f}"
         )
 
+    start_time = time.time()
     max_time = float(cfg.get("max_time", 250.0))
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
     
     # min_dist = float('inf')
-    target_ind = 0
+    # target_ind = 0
+    #added for the offset start
+    target_ind = start_offset
     # for i in range(len(cx)):
     #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
     #     if d < min_dist:
@@ -413,20 +349,6 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
     plotter = LivePlotter(cx, cy, cyaw, title=run_label)
     ####
-    ready_msg = Bool(data=True)
-    sync_rate = rospy.Rate(10)
-    print("QCar2 subscribers ready. Waiting for QCar1 subscribers before start barrier...")
-    while not rospy.is_shutdown() and not peer_subscribed.ready:
-        subscribed_pub.publish(Bool(data=True))
-        sync_rate.sleep()
-    ready_pub.publish(ready_msg)
-    print("QCar2 ready. Waiting for QCar1 before starting commands...")
-    while not rospy.is_shutdown() and not peer_ready.ready:
-        ready_pub.publish(ready_msg)
-        sync_rate.sleep()
-    print("QCar1 ready. Starting QCar2 now.")
-    start_time = time.time()
-
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
         #added-clamping the velocity
@@ -580,7 +502,6 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         "path_length": path_length,
         "goal_progress_margin": end_progress_margin,
         "circle_direction": "cw" if clockwise else "ccw",
-        "start_offset_steps": start_offset,
         "max_time": max_time,
     }
 
@@ -605,7 +526,6 @@ if __name__ == "__main__":
                     "target_speed": TARGET_SPEED,
                     #switch for cw or ccw
                     "circle_direction": "cw",
-                    "start_offset_steps": 10,
                     "max_time": MAX_TIME,
                     "length": LENGTH,  # For straight trajectory
                 })
@@ -627,7 +547,6 @@ if __name__ == "__main__":
                 path_length=reference_path["path_length"],
                 goal_progress_margin=reference_path["goal_progress_margin"],
                 circle_direction=reference_path["circle_direction"],
-                start_offset_steps=reference_path["start_offset_steps"],
                 max_time=reference_path["max_time"],
                 reference_x=reference_path["reference_x"],
                 reference_y=reference_path["reference_y"],
