@@ -214,7 +214,7 @@ def calc_lemniscate_course(scale=RADIUS, ds=DS, center_x=0.0, center_y=0.0, star
 
     return rx.tolist(), ry.tolist(), ryaw.tolist(), rk.tolist(), s_uniform.tolist()
 
-
+    #switch
 def get_trajectory(trajectory_type="lemniscate", **kwargs):
     """
     Unified trajectory selector.
