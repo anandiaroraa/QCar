@@ -47,6 +47,17 @@ from .trajectory import get_trajectory
 
 #REACHED_GOAL = 8
 
+#added null live plotter for now. If live plotting is disabled, this will be used as a no-op placeholder to avoid needing conditionals around plotter calls.
+class _NullLivePlotter:
+    def update(self, *args, **kwargs):
+        pass
+
+    def save(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
 class _Pose():
     def __init__(self):
         self.reset()
@@ -72,10 +83,54 @@ def mpc2data(x, y, theta, v):
     pass
     return [x, y, theta, v]
 
+def _pose_received(data, require_block_pose=True):
+    block_ready = (not require_block_pose) or data.block.received
+    return data.car1.received and data.car2.received and block_ready
+
+def _block_history_row(block):
+    return [block.x, block.y, block.theta, time.time()]
+
+def _publish_drive(pub, steer, speed):
+    drive_msg = AckermannDriveStamped()
+    drive_msg.header.stamp = rospy.Time.now()
+    drive_msg.drive = AckermannDrive(steering_angle=float(steer), speed=float(speed))
+    pub.publish(drive_msg)
+
+def _wait_for_command_subscribers(pub1, pub2, topic1, topic2, timeout_sec=20.0):
+    print("Waiting for both cars to subscribe to command topics...")
+    rate = rospy.Rate(10)
+    timeout = rospy.Time.now() + rospy.Duration(float(timeout_sec))
+
+    while not rospy.is_shutdown() and rospy.Time.now() < timeout:
+        car1_ready = pub1.get_num_connections() > 0
+        car2_ready = pub2.get_num_connections() > 0
+        if car1_ready and car2_ready:
+            print("Both cars are subscribed to command topics.")
+            return
+        rate.sleep()
+
+    missing = []
+    if pub1.get_num_connections() == 0:
+        missing.append(f"car1 command subscriber ({topic1})")
+    if pub2.get_num_connections() == 0:
+        missing.append(f"car2 command subscriber ({topic2})")
+    raise RuntimeError("Missing required " + ", ".join(missing))
+
 class Data():
     def __init__(self):
         self.car1 = _Pose()
         self.car2 = _Pose()
+        self.block = _Pose()
+
+    def update_block_pose(self, msg):
+        pose = msg.pose.position
+        orientation = msg.pose.orientation
+        self.block.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
+        # quat to euler uses x y z w
+        self.block.theta = float(quat2euler([self.block.quat[1], self.block.quat[2], self.block.quat[3], self.block.quat[0]])[2])
+        self.block.x = pose.x
+        self.block.y = pose.y
+        self.block.received = True
     
     def update_car1_pose(self, msg):
         pose = msg.pose.position
@@ -116,6 +171,181 @@ class Data():
         self.car2._last_x = self.car2.x
         self.car2._last_y = self.car2.y
         self.car2._last_t = now
+#added
+def _make_reference_path(pose, cfg, label):
+    trajectory_type = cfg.get("trajectory_type", "straight")  # Switch between circle, straight, or lemniscate
+    target_speed = float(np.clip(float(cfg.get("target_speed", TARGET_SPEED)), 0.0, MAX_SPEED))
+    radius = float(cfg.get("radius", RADIUS))
+    dl = float(cfg.get("ds", DS))
+    direction_cfg = cfg.get("circle_direction")
+    if direction_cfg is None:
+        clockwise = bool(cfg.get("clockwise", True))
+    else:
+        clockwise = str(direction_cfg).lower() == "cw"
+    direction_sign = -1 if clockwise else 1
+
+    if clockwise:
+        center_x = pose.x + radius * math.sin(pose.theta)
+        center_y = pose.y - radius * math.cos(pose.theta)
+    else:
+        center_x = pose.x - radius * math.sin(pose.theta)
+        center_y = pose.y + radius * math.cos(pose.theta)
+
+    print(f"{label} start: ({pose.x:.3f}, {pose.y:.3f}), theta: {pose.theta:.3f}")
+    print(f"{label} target speed: {target_speed:.3f} m/s")
+
+    if trajectory_type == "circle":
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "circle",
+            radius=radius,
+            ds=dl,
+            center_x=center_x,
+            center_y=center_y,
+            direction_sign=direction_sign,
+        )
+        min_dist = float("inf")
+        start_idx = 0
+        for i in range(len(cx)):
+            d = math.hypot(cx[i] - pose.x, cy[i] - pose.y)
+            if d < min_dist:
+                min_dist = d
+                start_idx = i
+
+        cx = np.roll(cx, -start_idx).tolist()
+        cy = np.roll(cy, -start_idx).tolist()
+        cyaw = np.roll(cyaw, -start_idx).tolist()
+        ck = np.roll(ck, -start_idx).tolist()
+        cyaw = smooth_yaw(cyaw)
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + direction_sign * 2.0 * math.pi)
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
+    elif trajectory_type == "lemniscate":
+        lemniscate_scale = float(cfg.get("scale", RADIUS))
+        lemniscate_laps = float(cfg.get("laps", 1.0))
+        start_angle = cfg.get("start_angle", pose.theta + 3.0 * math.pi / 4.0)
+        print(
+            f"{label} lemniscate: scale={lemniscate_scale:.1f}m, "
+            f"laps={lemniscate_laps:.1f}, start_angle={start_angle:.3f}rad"
+        )
+        center_x = float(cfg.get("center_x", 0.0))
+        center_y = float(cfg.get("center_y", 0.0))
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "lemniscate",
+            scale=lemniscate_scale,
+            ds=dl,
+            center_x=center_x,
+            center_y=center_y,
+            start_angle=start_angle,
+            laps=lemniscate_laps,
+        )
+        cx.append(cx[0])
+        cy.append(cy[0])
+        cyaw.append(cyaw[0] + 2.0 * math.pi)
+        ck.append(ck[0])
+        cyaw = smooth_yaw(cyaw)
+    else:
+        straight_length = float(cfg.get("length", LENGTH))
+        start_angle = pose.theta
+        print(f"{label} straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
+        cx, cy, cyaw, ck, _ = get_trajectory(
+            "straight",
+            length=straight_length,
+            ds=dl,
+            start_x=pose.x,
+            start_y=pose.y,
+            angle=start_angle,
+        )
+
+    sp = calc_speed_profile(cx, cy, cyaw, target_speed=target_speed)
+    path_s = [0.0]
+    for i in range(1, len(cx)):
+        path_s.append(path_s[-1] + math.hypot(cx[i] - cx[i - 1], cy[i] - cy[i - 1]))
+
+    return {
+        "cx": cx,
+        "cy": cy,
+        "cyaw": cyaw,
+        "ck": ck,
+        "sp": sp,
+        "path_s": path_s,
+        "path_length": path_s[-1],
+        "center_x": center_x,
+        "center_y": center_y,
+        "radius": radius,
+        "target_speed": target_speed,
+        "ds": dl,
+        "circle_direction": "cw" if clockwise else "ccw",
+    }
+#added
+def _publish_reference(ref_pose_pub, xref):
+    ref_pose_msg = PoseStamped()
+    ref_pose_msg.header.stamp = rospy.Time.now()
+    ref_pose_msg.header.frame_id = "map"
+    ref_pose_msg.pose.position.x = float(xref[0, 0])
+    ref_pose_msg.pose.position.y = float(xref[1, 0])
+    ref_pose_msg.pose.position.z = 0.0
+    ref_pose_msg.pose.orientation.x = 0.0
+    ref_pose_msg.pose.orientation.y = 0.0
+    ref_pose_msg.pose.orientation.z = math.sin(float(xref[3, 0]) * 0.5)
+    ref_pose_msg.pose.orientation.w = math.cos(float(xref[3, 0]) * 0.5)
+    ref_pose_pub.publish(ref_pose_msg)
+#added
+def _mpc_action_for_pose(pose, ref, target_ind, oa, odelta, label, end_progress_margin):
+    state = State(
+        x=pose.x,
+        y=pose.y,
+        yaw=pose.theta,
+        v=float(np.clip(pose.v, MIN_SPEED, MAX_SPEED)),
+    )
+    xref, target_ind, dref = calc_ref_trajectory(
+        state,
+        ref["cx"],
+        ref["cy"],
+        ref["cyaw"],
+        ref["ck"],
+        ref["sp"],
+        ref["ds"],
+        target_ind,
+    )
+    path_progress = ref["path_s"][min(target_ind, len(ref["path_s"]) - 1)]
+    path_remaining = ref["path_length"] - path_progress
+    print(
+        f"{label}: target_ind={target_ind}, progress={path_progress:.3f}m, "
+        f"remaining={path_remaining:.3f}m"
+    )
+
+    if target_ind >= len(ref["cx"]) - 1 or path_remaining <= end_progress_margin:
+        return np.array([0.0, 0.0]), target_ind, oa, odelta, state, xref, None, None, True
+
+    oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(
+        xref,
+        [state.x, state.y, state.v, state.yaw],
+        dref,
+        oa,
+        odelta,
+    )
+    if oa is None or odelta is None:
+        ox, oy = None, None
+        steer, speed = 0.0, 0.0
+    else:
+        steer = float(odelta[0])
+        speed = float(np.clip(state.v + float(oa[0]) * DT, MIN_SPEED, MAX_SPEED))
+
+    steer = float(np.clip(steer, -MAX_STEER, MAX_STEER))
+    if abs(speed) > 1e-6:
+        speed = float(np.clip(speed, MIN_SPEED, MAX_SPEED))
+    return np.array([steer, speed]), target_ind, oa, odelta, state, xref, ox, oy, False
+#added
+def _execute_pushing(action1, action2, idx1, idx2, sync_index_gap=2, slow_factor=0.5):
+    if idx1 > idx2 + sync_index_gap:
+        action1 = action1.copy()
+        action1[1] *= slow_factor
+    elif idx2 > idx1 + sync_index_gap:
+        action2 = action2.copy()
+        action2[1] *= slow_factor
+    return np.concatenate((action1, action2))
 
 #changed the func name run_carpool_simulation to run_car
 def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
@@ -124,16 +354,36 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     if not rospy.core.is_initialized():
         rospy.init_node("qcar_ros", anonymous=True)
     # obs = sim_env.set_init_states()
+    cfg = path_tracking_config or {}
+    car1_pose_topic = cfg.get("car1_pose_topic", "/natnet_ros/RigidBody1/pose")
+    car2_pose_topic = cfg.get("car2_pose_topic", "/natnet_ros/RigidBody2/pose")
+    block_pose_topic = cfg.get("block_pose_topic", "/natnet_ros/RigidBody3/pose")
+    car1_cmd_topic = cfg.get("car1_cmd_topic", "/qcar/mux/ackermann_cmd_mux/input/navigation")
+    car2_cmd_topic = cfg.get("car2_cmd_topic", "/qcar2/mux/ackermann_cmd_mux/input/navigation")
+    car1_ref_topic = cfg.get("car1_ref_topic", "/mpc/qcar1/reference_pose")
+    car2_ref_topic = cfg.get("car2_ref_topic", "/mpc/qcar2/reference_pose")
+    require_block_pose = bool(cfg.get("require_block_pose", True))
+
     data = Data()
-    get_car1_pose = rospy.Subscriber("/natnet_ros/RigidBody1/pose", PoseStamped, data.update_car1_pose)
-    get_car2_pose = rospy.Subscriber("/natnet_ros/RigidBody2/pose", PoseStamped, data.update_car2_pose)
+    get_car1_pose = rospy.Subscriber(car1_pose_topic, PoseStamped, data.update_car1_pose)
+    get_car2_pose = rospy.Subscriber(car2_pose_topic, PoseStamped, data.update_car2_pose)
+    get_block_pose = rospy.Subscriber(block_pose_topic, PoseStamped, data.update_block_pose)
     rospy.sleep(1)
     
-    give_command1 = rospy.Publisher("/qcar/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
-    give_command2 = rospy.Publisher("/qcar2/mux/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=1)
-    ref_pose_pub = rospy.Publisher("/mpc/reference_pose", PoseStamped, queue_size=1)
+    give_command1 = rospy.Publisher(car1_cmd_topic, AckermannDriveStamped, queue_size=1)
+    give_command2 = rospy.Publisher(car2_cmd_topic, AckermannDriveStamped, queue_size=1)
+    ref_pose_pub1 = rospy.Publisher(car1_ref_topic, PoseStamped, queue_size=1)
+    ref_pose_pub2 = rospy.Publisher(car2_ref_topic, PoseStamped, queue_size=1)
+    command_subscriber_timeout = float(cfg.get("command_subscriber_timeout", 10.0))
+    _wait_for_command_subscribers(
+        give_command1,
+        give_command2,
+        car1_cmd_topic,
+        car2_cmd_topic,
+        command_subscriber_timeout,
+    )
 
-    car1_history, car2_history = [], []
+    car1_history, car2_history, block_history = [], [], []
 
     # collected_data = []
     # processed_data = np.array([])
@@ -158,22 +408,33 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     while rospy.Time.now() < timeout:
         # Check if we've received valid data (not default values)
         #if (data.car1.quat != [0, 0, 0, 1]):
-        if data.car1.received and data.car2.received:
+        if _pose_received(data, require_block_pose):
             print("Received all pose data!")
             break
         rate.sleep()
     else:
         print("WARNING: Timeout waiting for pose data!")
+        if not data.car1.received or not data.car2.received:
+            missing = []
+            if not data.car1.received:
+                missing.append(f"car1 ({car1_pose_topic})")
+            if not data.car2.received:
+                missing.append(f"car2 ({car2_pose_topic})")
+            raise RuntimeError("Missing required pose data for " + ", ".join(missing))
+        if require_block_pose and not data.block.received:
+            raise RuntimeError(f"Missing required block pose data ({block_pose_topic})")
     #car1_start_pose = np.array([car1_theta[0], car1_theta[1], car1_theta[2]])
     
 
     print("Initial pose of car1:", data.car1.x, data.car1.y, data.car1.theta)
     print("Initial pose of car2:", data.car2.x, data.car2.y, data.car2.theta)
+    if data.block.received:
+        print("Initial pose of block:", data.block.x, data.block.y, data.block.theta)
     
     #object_goal_pose = sim_env.object_goal_pose
     #object_goal_pose = np.array([0.5, 0.5])  # Placeholder goal pose; replace with sim_env.object_goal_pose when available
     #print("Object goal pose:", object_goal_pose)
-    object_goal_pose = None
+    object_goal_pose = cfg.get("object_goal_pose")
     #rate = Rate(1 / config.dt)
 
     #start_time = time.time()
@@ -220,126 +481,28 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         
         #rate.sleep()
         
-    #added my mpc
-    cfg = path_tracking_config or {}
     trajectory_type = cfg.get("trajectory_type", "circle")  # "circle", "straight", or "lemniscate"
-    radius = float(cfg.get("radius", RADIUS))
-    dl = float(cfg.get("ds", DS))
-    start_offset = int(cfg.get("start_offset_steps", 10))  # offset in steps from closest waypoint
-    # # center_x = float(cfg.get("center_x", data.car1.x))
-    # # center_y = float(cfg.get("center_y", data.car1.y))
-    direction_cfg = cfg.get("circle_direction")
-    if direction_cfg is None:
-        clockwise = bool(cfg.get("clockwise", True))
-    else:
-        clockwise = str(direction_cfg).lower() == "cw"
-    direction_sign = -1 if clockwise else 1
-
-    if clockwise:
-        center_x = data.car1.x + radius * math.sin(data.car1.theta)
-        center_y = data.car1.y - radius * math.cos(data.car1.theta)
-    else:
-        center_x = data.car1.x - radius * math.sin(data.car1.theta)
-        center_y = data.car1.y + radius * math.cos(data.car1.theta)
-    # #center_x = data.car1.x - radius * math.sin(data.car1.theta)
-    # #center_y = data.car1.y + radius * math.cos(data.car1.theta)
-    print(f"Car start: ({data.car1.x:.3f}, {data.car1.y:.3f}), theta: {data.car1.theta:.3f}")
-    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
-    print(f"START POSE used for path generation: x={data.car1.x:.3f}, y={data.car1.y:.3f}, theta={data.car1.theta:.3f}")
-    if trajectory_type == "circle":
-        cx, cy, cyaw, ck, _ = get_trajectory(
-            "circle",
-            radius=radius,
-            ds=dl,
-            center_x=center_x,
-            center_y=center_y,
-            direction_sign=direction_sign
-        )
-        #rotate the circle waypoints so waypoint 0 is closest to the car's start position
-        #TO DO: verify without modifying the trajectory.
-        #this commented out did not help as the waypoints starting from the same point as the car works for right now  maybe later we can fix it.
-        min_dist = float('inf')
-        start_idx = 0
-        for i in range(len(cx)):
-            d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
-            if d < min_dist:
-                min_dist = d
-                start_idx = i
-        start_idx = (start_idx + start_offset) % len(cx)
-
-        cx   = np.roll(cx,   -start_idx).tolist()
-        cy   = np.roll(cy,   -start_idx).tolist()
-        cyaw = np.roll(cyaw, -start_idx).tolist() 
-        ck   = np.roll(ck,   -start_idx).tolist()
-        cyaw = smooth_yaw(cyaw)
-        #added closed circle path
-        cx.append(cx[0])
-        cy.append(cy[0])
-        cyaw.append(cyaw[0] + direction_sign * 2.0 * math.pi)
-        ck.append(ck[0])
-        cyaw = smooth_yaw(cyaw)
-        ####
-
-        # target index is initialized below using nearest waypoint search
-    elif trajectory_type == "lemniscate":
-        lemniscate_scale = float(cfg.get("scale", RADIUS))
-        lemniscate_laps = float(cfg.get("laps", 1.0))
-        start_angle = cfg.get("start_angle", data.car1.theta + 3.0 * math.pi / 4.0)
-        print(f"Lemniscate: scale={lemniscate_scale:.1f}m, laps={lemniscate_laps:.1f}, start_angle={start_angle:.3f}rad")
-        
-        cx, cy, cyaw, ck, _ = get_trajectory(
-            "lemniscate",
-            scale=lemniscate_scale,
-            ds=dl,
-            center_x=data.car1.x,
-            center_y=data.car1.y,
-            start_angle=start_angle,
-            laps=lemniscate_laps
-        )
-        center_x = data.car1.x
-        center_y = data.car1.y
-        
-        # Close the lemniscate trajectory (append start point to end for complete figure-8)
-        cx.append(cx[0])
-        cy.append(cy[0])
-        cyaw.append(cyaw[0] + 2.0 * math.pi)  # full rotation for figure-8
-        ck.append(ck[0])
-        cyaw = smooth_yaw(cyaw)
-    else:  # straight
-        straight_length = float(cfg.get("length", LENGTH))
-        start_angle = data.car1.theta
-        print(f"Straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
-        
-        cx, cy, cyaw, ck, _ = get_trajectory(
-            "straight",
-            length=straight_length,
-            ds=dl,
-            start_x=data.car1.x,
-            start_y=data.car1.y,
-            angle=start_angle
-        )
-    print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
-        # center_x = data.car1.x
-        # center_y = data.car1.y
-    
-    print(f"Circle center: ({center_x:.3f}, {center_y:.3f})")
-    print(f"Circle direction: {'CW' if clockwise else 'CCW'}")
-
-    sp = calc_speed_profile(cx, cy, cyaw, target_speed=TARGET_SPEED)
-    #added for termination
-    path_s = [0.0]
-    for i in range(1, len(cx)):
-        path_s.append(path_s[-1] + math.hypot(cx[i] - cx[i - 1], cy[i] - cy[i - 1]))
-    path_length = path_s[-1]
+    enable_live_plot = bool(cfg.get("enable_live_plot", True))
+    car1_ref = _make_reference_path(data.car1, cfg, "car1")
+    car2_ref = _make_reference_path(data.car2, cfg, "car2")
+    cx, cy, cyaw, ck, sp = (
+        car1_ref["cx"],
+        car1_ref["cy"],
+        car1_ref["cyaw"],
+        car1_ref["ck"],
+        car1_ref["sp"],
+    )
+    center_x = car1_ref["center_x"]
+    center_y = car1_ref["center_y"]
+    radius = car1_ref["radius"]
+    dl = car1_ref["ds"]
+    path_length = car1_ref["path_length"]
     end_progress_margin = float(cfg.get("goal_progress_margin", GOAL_DIS))
-    print(f"Reference path length: {path_length:.3f}m")
+    print(f"car1 reference path length: {car1_ref['path_length']:.3f}m")
+    print(f"car2 reference path length: {car2_ref['path_length']:.3f}m")
     print(f"Path-complete margin: {end_progress_margin:.3f}m")
-    ####
-    # cyaw = smooth_yaw(cyaw)
-    # wrap cyaw to [-pi, pi)
-    # cyaw = (cyaw + np.pi) % (2 * np.pi) - np.pi
 
-    print("Generated reference trajectory points (index, xref, yref, yawref, kref, vref):")
+    print("Generated car1 reference trajectory points (index, xref, yref, yawref, kref, vref):")
     for i in range(len(cx)):
         print(
             f"  ref[{i:03d}] xref={float(cx[i]):.3f}, yref={float(cy[i]):.3f}, "
@@ -351,192 +514,117 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     rate = rospy.Rate(int(max(1, round(1.0 / DT))))
     
-    # min_dist = float('inf')
-    # target_ind = 0
-    #added for the offset start
-    target_ind = start_offset
-    # for i in range(len(cx)):
-    #     d = math.hypot(cx[i] - data.car1.x, cy[i] - data.car1.y)
-    #     if d < min_dist:
-    #         min_dist = d
-    #         target_ind = i
-    # print(f"target_ind at start: {target_ind}, dist to nearest waypoint: {min_dist:.3f}m")
-
-    oa, odelta = None, None
-    #added this
-    #TO DO: remove? not the way to change velocity
-    # data.car1.v = MIN_SPEED #starting should be a little warm
+    target_ind1 = int(cfg.get("car1_start_index", 0))
+    target_ind2 = int(cfg.get("car2_start_index", 0))
+    oa1, odelta1 = None, None
+    oa2, odelta2 = None, None
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
-    print(f"DEBUG: Circle center = ({center_x:.3f}, {center_y:.3f}), radius = {radius}")
-    ####added for live plotting
+    print(f"DEBUG: car2 pose = ({data.car2.x:.3f}, {data.car2.y:.3f}, {data.car2.theta:.3f})")
     run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
-    plotter = LivePlotter(cx, cy, cyaw, title=run_label)
-    ####
-    while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
-        #state = State(x=data.car1.x, y=data.car1.y, yaw=data.car1.theta, v=data.car1.v)
-        #added-clamping the velocity
-        state = State(
-        x=data.car1.x,
-        y=data.car1.y,
-        yaw=data.car1.theta,
-        v=float(np.clip(data.car1.v, MIN_SPEED, MAX_SPEED)) 
-        )
-        xref, target_ind, dref = calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, target_ind)
-        ####added for termination based on progress along the path
-        path_progress = path_s[min(target_ind, len(path_s) - 1)]
-        path_remaining = path_length - path_progress
+    plotter = LivePlotter(cx, cy, cyaw, title=run_label) if enable_live_plot else _NullLivePlotter()
 
-        #print table with error in x, y, yaw, v using state and xref
-        print(f"error: ex={state.x - xref[0, 0]:.3f}, ey={state.y - xref[1, 0]:.3f}, eyaw={state.yaw - xref[3, 0]:.3f}, ev={state.v - xref[2, 0]:.3f}")
-        print(f"target_ind={target_ind}, path_progress={path_progress:.3f}m, path_remaining={path_remaining:.3f}m")
-        print()        
-        if target_ind >= len(cx) - 1 or path_remaining <= end_progress_margin:
-            print(
-                f"Path complete: target_ind={target_ind}/{len(cx) - 1}, "
-                f"progress={path_progress:.3f}m/{path_length:.3f}m, "
-                f"remaining={path_remaining:.3f}m"
-            )
-            car1_history.append([state.x, state.y, state.yaw, state.v, 0.0, 0.0, time.time()])
+    while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
+        action1, target_ind1, oa1, odelta1, state1, xref1, ox1, oy1, done1 = _mpc_action_for_pose(
+            data.car1, car1_ref, target_ind1, oa1, odelta1, "car1", end_progress_margin
+        )
+        action2, target_ind2, oa2, odelta2, state2, xref2, ox2, oy2, done2 = _mpc_action_for_pose(
+            data.car2, car2_ref, target_ind2, oa2, odelta2, "car2", end_progress_margin
+        )
+        _publish_reference(ref_pose_pub1, xref1)
+        _publish_reference(ref_pose_pub2, xref2)
+
+        if done1 and done2:
+            print("Both cars completed their paths.")
+            car1_history.append([state1.x, state1.y, state1.yaw, state1.v, 0.0, 0.0, time.time()])
+            car2_history.append([state2.x, state2.y, state2.yaw, state2.v, 0.0, 0.0, time.time()])
+            block_history.append(_block_history_row(data.block))
             plotter.update(
-                state_x      = state.x,
-                state_y      = state.y,
-                state_yaw    = state.yaw,
-                state_v      = state.v,
-                ox           = None,
-                oy           = None,
-                xref         = xref,
-                target_ind   = target_ind,
-                elapsed_time = time.time() - start_time,
-                force        = True,
+                state_x=state1.x,
+                state_y=state1.y,
+                state_yaw=state1.yaw,
+                state_v=state1.v,
+                ox=None,
+                oy=None,
+                xref=xref1,
+                target_ind=target_ind1,
+                elapsed_time=time.time() - start_time,
+                force=True,
             )
             break
 
-        x_ref_now = float(xref[0, 0])
-        y_ref_now = float(xref[1, 0])
-        cyaw_ref_now = float(xref[3, 0])
-        v_ref_now = float(xref[2, 0])
-        
+        action = _execute_pushing(action1, action2, target_ind1, target_ind2)
+        steer1, speed1, steer2, speed2 = [float(v) for v in action]
 
+        print(
+            f"t={time.time() - start_time:.2f}s | "
+            f"car1 x={state1.x:.3f}, y={state1.y:.3f}, yaw={state1.yaw:.3f}, v={state1.v:.3f}, "
+            f"cmd=({steer1:.3f}, {speed1:.3f}) | "
+            f"car2 x={state2.x:.3f}, y={state2.y:.3f}, yaw={state2.yaw:.3f}, v={state2.v:.3f}, "
+            f"cmd=({steer2:.3f}, {speed2:.3f})"
+        )
 
-        ############################### debug print statements ###############################
-        ref_pose_msg = PoseStamped()
-        ref_pose_msg.header.stamp = rospy.Time.now()
-        ref_pose_msg.header.frame_id = "map"
-        ref_pose_msg.pose.position.x = x_ref_now
-        ref_pose_msg.pose.position.y = y_ref_now
-        ref_pose_msg.pose.position.z = 0.0
-        ref_pose_msg.pose.orientation.x = 0.0
-        ref_pose_msg.pose.orientation.y = 0.0
-        ref_pose_msg.pose.orientation.z = math.sin(cyaw_ref_now * 0.5)
-        ref_pose_msg.pose.orientation.w = math.cos(cyaw_ref_now * 0.5)
-        ref_pose_pub.publish(ref_pose_msg)
+        _publish_drive(give_command1, steer1, speed1)
+        _publish_drive(give_command2, steer2, speed2)
 
-        #TO DO: Commented
-        # horizon_xy = ", ".join([
-        #     f"({float(xref[0, j]):.3f},{float(xref[1, j]):.3f})"
-        #     for j in range(xref.shape[1])
-        # ])
-        # print(f"xref/yref horizon: {horizon_xy}")
-        print(f"t={time.time() - start_time:.2f}s | x={state.x:.3f}, xref={x_ref_now:.3f}, y={state.y:.3f}, yref={y_ref_now:.3f}, yaw={state.yaw:.3f}, yawref={cyaw_ref_now:.3f}, v={state.v:.3f}, vref={v_ref_now:.3f}")
-
-        x0 = [state.x, state.y, state.v, state.yaw]
-        
-
-        # oa, odelta, *_ = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
-        ####added for the live plotting
-        oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(xref, x0, dref, oa, odelta)
-        ####
-
-        if oa is None or odelta is None:
-            steer1, speed1 = 0.0, 0.0
-            ####adde for live plotting to not error out when MPC fails
-            ox, oy = None, None
-        else:
-            a_cmd = float(oa[0])                  # accel output
-            steer1 = float(odelta[0])            # steer output
-            # steer1 = np.deg2rad (-7.0)
-            speed1 = float(np.clip(state.v + a_cmd * DT, MIN_SPEED, MAX_SPEED))  # accel -> speed
-
-        steer1 = float(np.clip(steer1, -MAX_STEER, MAX_STEER))
-        speed1 = float(np.clip(speed1, MIN_SPEED, MAX_SPEED))
-
-        drive_car1 = AckermannDrive(steering_angle=steer1, speed=speed1)
-        drive_car2 = AckermannDrive(steering_angle=0.0, speed=0.0)  # keep car2 stationary for now
-        drive_msg1 = AckermannDriveStamped()
-        drive_msg2 = AckermannDriveStamped()
-        drive_msg1.header.stamp = rospy.Time.now()
-        drive_msg2.header.stamp = rospy.Time.now()
-        drive_msg1.drive = drive_car1
-        drive_msg2.drive = drive_car2
-        give_command1.publish(drive_msg1)
-        give_command2.publish(drive_msg2)
-
-        car1_history.append([state.x, state.y, state.yaw, state.v, steer1, speed1, time.time()])
-        car2_history.append([state.x, state.y, state.yaw, state.v, steer1, speed1, time.time()])
-        ####added for live pllotting
+        car1_history.append([state1.x, state1.y, state1.yaw, state1.v, steer1, speed1, time.time()])
+        car2_history.append([state2.x, state2.y, state2.yaw, state2.v, steer2, speed2, time.time()])
+        block_history.append(_block_history_row(data.block))
         plotter.update(
-            state_x      = state.x,
-            state_y      = state.y,
-            state_yaw    = state.yaw,
-            state_v      = state.v,
-            ox           = ox,
-            oy           = oy,
-            xref         = xref,
-            target_ind   = target_ind,
+            state_x      = state1.x,
+            state_y      = state1.y,
+            state_yaw    = state1.yaw,
+            state_v      = state1.v,
+            ox           = ox1,
+            oy           = oy1,
+            xref         = xref1,
+            target_ind   = target_ind1,
             elapsed_time = time.time() - start_time,
         )
-        ####
 
         rate.sleep()
     
     # ADD: Stop the robots
-    stop_drive = AckermannDrive(steering_angle=0.0, speed=0.0)
-    #stop_msg = AckermannDriveStamped(drive=stop_drive)
-    #give_command1.publish(stop_msg)
-    
-    stop_msg = AckermannDriveStamped()
-    stop_msg.header.stamp = rospy.Time.now()
-    stop_msg.drive = stop_drive
     for _ in range(5):
-        give_command1.publish(stop_msg)
+        _publish_drive(give_command1, 0.0, 0.0)
+        _publish_drive(give_command2, 0.0, 0.0)
         rospy.sleep(0.05)
 
-    #####added for live plotting
-    save_name = f"live_plot_{trajectory_type}_{time.strftime('%Y%m%d_%H%M%S')}.gif"
-    plotter.save(save_name, extra_seconds=3.0)
+    if enable_live_plot:
+        save_name = f"live_plot_{trajectory_type}_{time.strftime('%Y%m%d_%H%M%S')}.gif"
+        plotter.save(save_name, extra_seconds=3.0)
     plotter.close()
-    #####
-    # ADD: Calculate execution time and get original path
     execution_time = time.time() - start_time
-    #original_path = state_machine.object_plan if hasattr(state_machine, 'object_plan') else None
     original_path = None 
-    # ADD: Print summary
-    
-    # if time.time() - start_time > max_time:
-    #     print("Hardware experiment timed out.")
-    # else:
-    #     print(f"Hardware experiment completed in {execution_time:.2f} seconds")
-    #tune
     reference_path = {
         "reference_x": np.array(cx),
         "reference_y": np.array(cy),
-        # np swicth was not defined so changed it"reference_yaw": npswitch.array(cyaw),
         "reference_yaw": np.array(cyaw),
         "reference_curvature": np.array(ck),
+        "car1_reference_x": np.array(cx),
+        "car1_reference_y": np.array(cy),
+        "car1_reference_yaw": np.array(cyaw),
+        "car1_reference_curvature": np.array(ck),
         "center_x": center_x,
         "center_y": center_y,
         "radius": radius,
-        "target_speed": TARGET_SPEED,
+        "target_speed": car1_ref["target_speed"],
         "ds": dl,
         "path_length": path_length,
+        "car1_path_length": car1_ref["path_length"],
+        "car2_path_length": car2_ref["path_length"],
         "goal_progress_margin": end_progress_margin,
-        "circle_direction": "cw" if clockwise else "ccw",
+        "circle_direction": car1_ref["circle_direction"],
         "max_time": max_time,
+        "block_history": np.array(block_history),
+        "car2_history": np.array(car2_history),
+        "car2_reference_x": np.array(car2_ref["cx"]),
+        "car2_reference_y": np.array(car2_ref["cy"]),
+        "car2_reference_yaw": np.array(car2_ref["cyaw"]),
+        "car2_reference_curvature": np.array(car2_ref["ck"]),
     }
 
-    # ADD: Return collected data #tune
-    return car1_history, original_path, execution_time, object_goal_pose, reference_path
+    return car1_history, car2_history, block_history, original_path, execution_time, object_goal_pose, reference_path
 
 if __name__ == "__main__":
     import os    
@@ -545,11 +633,11 @@ if __name__ == "__main__":
     
     # Create directory for results
     for test_case in test_cases:
-        results_dir = f'hardware_results_test_qcar2{test_case}' #change to hardware_results_test_straight
+        results_dir = f'hardware_results_combined_test{test_case}' #change to hardware_results_test_straight
         os.makedirs(results_dir, exist_ok=True)
         try:
             #SWITCH TRAJECTORY 
-            car1_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
+            car1_hist, car2_hist, block_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
                     "trajectory_type": "lemniscate",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
@@ -564,6 +652,8 @@ if __name__ == "__main__":
             np.savez_compressed(
                 os.path.join(results_dir, f'run_{0:03d}_t_{time.time():.5f}.npz'),
                 car1_history=np.array(car1_hist),
+                car2_history=np.array(car2_hist),
+                block_history=np.array(block_hist),
                 original_path=np.array(orig_path) if orig_path is not None else np.array([]),
                 execution_time=exec_time,
                 object_goal_pose=goal,
@@ -582,6 +672,16 @@ if __name__ == "__main__":
                 reference_y=reference_path["reference_y"],
                 reference_yaw=reference_path["reference_yaw"],
                 reference_curvature=reference_path["reference_curvature"],
+                car1_reference_x=reference_path["car1_reference_x"],
+                car1_reference_y=reference_path["car1_reference_y"],
+                car1_reference_yaw=reference_path["car1_reference_yaw"],
+                car1_reference_curvature=reference_path["car1_reference_curvature"],
+                car2_reference_x=reference_path["car2_reference_x"],
+                car2_reference_y=reference_path["car2_reference_y"],
+                car2_reference_yaw=reference_path["car2_reference_yaw"],
+                car2_reference_curvature=reference_path["car2_reference_curvature"],
+                car1_path_length=reference_path["car1_path_length"],
+                car2_path_length=reference_path["car2_path_length"],
             )
         except Exception as e:
             print(f"  ✗ Run failed with error: {e}")

@@ -63,6 +63,7 @@ MAX_ACCEL = MAX_ACCEL
 STEER_TRIM = np.deg2rad(-7.0)
 
 show_animation = False  # simulation
+VERBOSE_XREF = False
 
 
 class State:
@@ -219,9 +220,8 @@ def iterative_linear_mpc_control(xref, x0, dref, oa, od):
         poa, pod = oa[:], od[:]
         
         oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
-        #added
-        # if oa is None or od is None:
-        #     return None, None, ox, oy, oyaw, ov
+        if oa is None or od is None:
+            return None, None, ox, oy, oyaw, ov
         du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
         if du <= DU_TH:
             break
@@ -317,7 +317,8 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     for i in range(1, T + 1):
         travel += abs(state.v) * DT
         dind = int(round(travel / dl))
-        print(f"[xref] v={state.v:.3f} dind={dind} travel={travel:.4f} dl={dl}")
+        if VERBOSE_XREF:
+            print(f"[xref] v={state.v:.3f} dind={dind} travel={travel:.4f} dl={dl}")
 
         if (ind + dind) < ncourse:
             xref[0, i] = cx[ind + dind]
