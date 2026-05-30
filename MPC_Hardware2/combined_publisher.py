@@ -90,15 +90,19 @@ def _pose_received(data, require_block_pose=True):
 def _block_history_row(block):
     return [block.x, block.y, block.theta, time.time()]
 
-def _publish_drive(pub, steer, speed):
+def _publish_drive(pub, steer, speed, accel):
     drive_msg = AckermannDriveStamped()
     drive_msg.header.stamp = rospy.Time.now()
-    drive_msg.drive = AckermannDrive(steering_angle=float(steer), speed=float(speed))
+    drive_msg.drive = AckermannDrive(
+        steering_angle=float(steer),
+        speed=float(speed),
+        acceleration=float(np.clip(accel, -MAX_ACCEL, MAX_ACCEL)),
+    )
     pub.publish(drive_msg)
 
-def _wait_for_command_subscribers(pub1, pub2, topic1, topic2, timeout_sec=20.0):
+def _wait_for_command_subscribers(pub1, pub2, topic1, topic2, timeout_sec=50.0):
     print("Waiting for both cars to subscribe to command topics...")
-    rate = rospy.Rate(10)
+    rate = rospy.Rate(20)
     timeout = rospy.Time.now() + rospy.Duration(float(timeout_sec))
 
     while not rospy.is_shutdown() and rospy.Time.now() < timeout:
@@ -125,9 +129,14 @@ class Data():
     def update_block_pose(self, msg):
         pose = msg.pose.position
         orientation = msg.pose.orientation
-        self.block.quat = [orientation.w, orientation.x,orientation.y,orientation.z]
+        self.block.quat = [orientation.w, orientation.x, orientation.y, orientation.z]
         # quat to euler uses x y z w
-        self.block.theta = float(quat2euler([self.block.quat[1], self.block.quat[2], self.block.quat[3], self.block.quat[0]])[2])
+        self.block.theta = float(quat2euler([
+            self.block.quat[1],
+            self.block.quat[2],
+            self.block.quat[3],
+            self.block.quat[0],
+        ])[2])
         self.block.x = pose.x
         self.block.y = pose.y
         self.block.received = True
@@ -247,7 +256,7 @@ def _make_reference_path(pose, cfg, label):
         cyaw = smooth_yaw(cyaw)
     else:
         straight_length = float(cfg.get("length", LENGTH))
-        start_angle = pose.theta
+        start_angle = float(cfg.get("straight_angle", pose.theta))
         print(f"{label} straight line: length={straight_length:.1f}m, angle={start_angle:.3f}rad")
         cx, cy, cyaw, ck, _ = get_trajectory(
             "straight",
@@ -317,7 +326,7 @@ def _mpc_action_for_pose(pose, ref, target_ind, oa, odelta, label, end_progress_
     )
 
     if target_ind >= len(ref["cx"]) - 1 or path_remaining <= end_progress_margin:
-        return np.array([0.0, 0.0]), target_ind, oa, odelta, state, xref, None, None, True
+        return np.array([0.0, 0.0, 0.0, 0.0]), target_ind, oa, odelta, state, xref, None, None, True
 
     oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(
         xref,
@@ -328,23 +337,32 @@ def _mpc_action_for_pose(pose, ref, target_ind, oa, odelta, label, end_progress_
     )
     if oa is None or odelta is None:
         ox, oy = None, None
-        steer, speed = 0.0, 0.0
+        steer, speed, mpc_accel = 0.0, 0.0, 0.0
     else:
         steer = float(odelta[0])
-        speed = float(np.clip(state.v + float(oa[0]) * DT, MIN_SPEED, MAX_SPEED))
+        mpc_accel = float(np.clip(float(oa[0]), -MAX_ACCEL, MAX_ACCEL))
+        speed = float(np.clip(state.v + mpc_accel * DT, MIN_SPEED, MAX_SPEED))
 
     steer = float(np.clip(steer, -MAX_STEER, MAX_STEER))
     if abs(speed) > 1e-6:
         speed = float(np.clip(speed, MIN_SPEED, MAX_SPEED))
-    return np.array([steer, speed]), target_ind, oa, odelta, state, xref, ox, oy, False
+    if speed <= 1e-6:
+        accel_cmd = 0.0
+    elif mpc_accel < -1e-6:
+        accel_cmd = -MAX_ACCEL
+    else:
+        accel_cmd = MAX_ACCEL
+    return np.array([steer, speed, accel_cmd, mpc_accel]), target_ind, oa, odelta, state, xref, ox, oy, False
 #added
 def _execute_pushing(action1, action2, idx1, idx2, sync_index_gap=2, slow_factor=0.5):
     if idx1 > idx2 + sync_index_gap:
         action1 = action1.copy()
         action1[1] *= slow_factor
+        action1[2] = -MAX_ACCEL
     elif idx2 > idx1 + sync_index_gap:
         action2 = action2.copy()
         action2[1] *= slow_factor
+        action2[2] = -MAX_ACCEL
     return np.concatenate((action1, action2))
 
 #changed the func name run_carpool_simulation to run_car
@@ -485,6 +503,7 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
     enable_live_plot = bool(cfg.get("enable_live_plot", True))
     car1_ref = _make_reference_path(data.car1, cfg, "car1")
     car2_ref = _make_reference_path(data.car2, cfg, "car2")
+    block_ref = _make_reference_path(data.block, cfg, "block") if data.block.received else None
     cx, cy, cyaw, ck, sp = (
         car1_ref["cx"],
         car1_ref["cy"],
@@ -521,8 +540,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
     print(f"DEBUG: car1 pose = ({data.car1.x:.3f}, {data.car1.y:.3f}, {data.car1.theta:.3f})")
     print(f"DEBUG: car2 pose = ({data.car2.x:.3f}, {data.car2.y:.3f}, {data.car2.theta:.3f})")
+    print(f"Forward published acceleration command: +{MAX_ACCEL:.3f} m/s^2")
     run_label = f"QCar MPC - {trajectory_type.capitalize()} - {time.strftime('%H:%M:%S')}"
-    plotter = LivePlotter(cx, cy, cyaw, title=run_label) if enable_live_plot else _NullLivePlotter()
+    plotter = (
+        LivePlotter(
+            cx,
+            cy,
+            cyaw,
+            title=run_label,
+            secondary_reference=(car2_ref["cx"], car2_ref["cy"], car2_ref["cyaw"]),
+        )
+        if enable_live_plot
+        else _NullLivePlotter()
+    )
 
     while not rospy.is_shutdown() and (time.time() - start_time) < max_time:
         action1, target_ind1, oa1, odelta1, state1, xref1, ox1, oy1, done1 = _mpc_action_for_pose(
@@ -536,8 +566,8 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
 
         if done1 and done2:
             print("Both cars completed their paths.")
-            car1_history.append([state1.x, state1.y, state1.yaw, state1.v, 0.0, 0.0, time.time()])
-            car2_history.append([state2.x, state2.y, state2.yaw, state2.v, 0.0, 0.0, time.time()])
+            car1_history.append([state1.x, state1.y, state1.yaw, state1.v, 0.0, 0.0, time.time(), 0.0, 0.0])
+            car2_history.append([state2.x, state2.y, state2.yaw, state2.v, 0.0, 0.0, time.time(), 0.0, 0.0])
             block_history.append(_block_history_row(data.block))
             plotter.update(
                 state_x=state1.x,
@@ -550,25 +580,35 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
                 target_ind=target_ind1,
                 elapsed_time=time.time() - start_time,
                 force=True,
+                secondary_state=(state2.x, state2.y, state2.yaw, state2.v),
+                secondary_xref=xref2,
             )
             break
 
         action = _execute_pushing(action1, action2, target_ind1, target_ind2)
-        steer1, speed1, steer2, speed2 = [float(v) for v in action]
+        steer1, speed1, accel1, mpc_accel1, steer2, speed2, accel2, mpc_accel2 = [
+            float(v) for v in action
+        ]
 
         print(
             f"t={time.time() - start_time:.2f}s | "
             f"car1 x={state1.x:.3f}, y={state1.y:.3f}, yaw={state1.yaw:.3f}, v={state1.v:.3f}, "
-            f"cmd=({steer1:.3f}, {speed1:.3f}) | "
+            f"cmd=(steer={steer1:.3f}, speed={speed1:.3f}, accel={accel1:.3f}, "
+            f"mpc_accel={mpc_accel1:.3f}) | "
             f"car2 x={state2.x:.3f}, y={state2.y:.3f}, yaw={state2.yaw:.3f}, v={state2.v:.3f}, "
-            f"cmd=({steer2:.3f}, {speed2:.3f})"
+            f"cmd=(steer={steer2:.3f}, speed={speed2:.3f}, accel={accel2:.3f}, "
+            f"mpc_accel={mpc_accel2:.3f})"
         )
 
-        _publish_drive(give_command1, steer1, speed1)
-        _publish_drive(give_command2, steer2, speed2)
+        _publish_drive(give_command1, steer1, speed1, accel1)
+        _publish_drive(give_command2, steer2, speed2, accel2)
 
-        car1_history.append([state1.x, state1.y, state1.yaw, state1.v, steer1, speed1, time.time()])
-        car2_history.append([state2.x, state2.y, state2.yaw, state2.v, steer2, speed2, time.time()])
+        car1_history.append([
+            state1.x, state1.y, state1.yaw, state1.v, steer1, speed1, time.time(), accel1, mpc_accel1
+        ])
+        car2_history.append([
+            state2.x, state2.y, state2.yaw, state2.v, steer2, speed2, time.time(), accel2, mpc_accel2
+        ])
         block_history.append(_block_history_row(data.block))
         plotter.update(
             state_x      = state1.x,
@@ -580,14 +620,18 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
             xref         = xref1,
             target_ind   = target_ind1,
             elapsed_time = time.time() - start_time,
+            secondary_state = (state2.x, state2.y, state2.yaw, state2.v),
+            secondary_ox    = ox2,
+            secondary_oy    = oy2,
+            secondary_xref  = xref2,
         )
 
         rate.sleep()
     
     # ADD: Stop the robots
     for _ in range(5):
-        _publish_drive(give_command1, 0.0, 0.0)
-        _publish_drive(give_command2, 0.0, 0.0)
+        _publish_drive(give_command1, 0.0, 0.0, -MAX_ACCEL)
+        _publish_drive(give_command2, 0.0, 0.0, -MAX_ACCEL)
         rospy.sleep(0.05)
 
     if enable_live_plot:
@@ -616,12 +660,19 @@ def run_car(test_case, at_pushing_pose=True, path_tracking_config=None):
         "goal_progress_margin": end_progress_margin,
         "circle_direction": car1_ref["circle_direction"],
         "max_time": max_time,
+        "max_accel": MAX_ACCEL,
+        "trajectory_type": trajectory_type,
+        "straight_angle": float(cfg.get("straight_angle", data.car1.theta)),
         "block_history": np.array(block_history),
         "car2_history": np.array(car2_history),
         "car2_reference_x": np.array(car2_ref["cx"]),
         "car2_reference_y": np.array(car2_ref["cy"]),
         "car2_reference_yaw": np.array(car2_ref["cyaw"]),
         "car2_reference_curvature": np.array(car2_ref["ck"]),
+        "block_reference_x": np.array(block_ref["cx"]) if block_ref is not None else np.array([]),
+        "block_reference_y": np.array(block_ref["cy"]) if block_ref is not None else np.array([]),
+        "block_reference_yaw": np.array(block_ref["cyaw"]) if block_ref is not None else np.array([]),
+        "block_reference_curvature": np.array(block_ref["ck"]) if block_ref is not None else np.array([]),
     }
 
     return car1_history, car2_history, block_history, original_path, execution_time, object_goal_pose, reference_path
@@ -638,7 +689,7 @@ if __name__ == "__main__":
         try:
             #SWITCH TRAJECTORY 
             car1_hist, car2_hist, block_hist, orig_path, exec_time, goal, reference_path = run_car(test_case, True, path_tracking_config={
-                    "trajectory_type": "lemniscate",  # ← Change to "straight" for straight line
+                    "trajectory_type": "straight",  # ← Change to "straight" for straight line
                     # "radius": RADIUS,
                     "ds": DS,
                     "target_speed": TARGET_SPEED,
@@ -646,6 +697,7 @@ if __name__ == "__main__":
                     "circle_direction": "cw",
                     "max_time": MAX_TIME,
                     "length": LENGTH,  # For straight trajectory
+                    "straight_angle": math.pi / 2.0,  # Vertical line in the +y direction.
                 })
             
             # Save this run immediately
@@ -653,6 +705,10 @@ if __name__ == "__main__":
                 os.path.join(results_dir, f'run_{0:03d}_t_{time.time():.5f}.npz'),
                 car1_history=np.array(car1_hist),
                 car2_history=np.array(car2_hist),
+                car_history_columns=np.array([
+                    "x", "y", "yaw", "measured_speed", "steer_cmd", "speed_cmd",
+                    "timestamp", "accel_cmd", "mpc_accel",
+                ]),
                 block_history=np.array(block_hist),
                 original_path=np.array(orig_path) if orig_path is not None else np.array([]),
                 execution_time=exec_time,
@@ -668,6 +724,9 @@ if __name__ == "__main__":
                 goal_progress_margin=reference_path["goal_progress_margin"],
                 circle_direction=reference_path["circle_direction"],
                 max_time=reference_path["max_time"],
+                max_accel=reference_path["max_accel"],
+                trajectory_type=reference_path["trajectory_type"],
+                straight_angle=reference_path["straight_angle"],
                 reference_x=reference_path["reference_x"],
                 reference_y=reference_path["reference_y"],
                 reference_yaw=reference_path["reference_yaw"],
@@ -680,6 +739,10 @@ if __name__ == "__main__":
                 car2_reference_y=reference_path["car2_reference_y"],
                 car2_reference_yaw=reference_path["car2_reference_yaw"],
                 car2_reference_curvature=reference_path["car2_reference_curvature"],
+                block_reference_x=reference_path["block_reference_x"],
+                block_reference_y=reference_path["block_reference_y"],
+                block_reference_yaw=reference_path["block_reference_yaw"],
+                block_reference_curvature=reference_path["block_reference_curvature"],
                 car1_path_length=reference_path["car1_path_length"],
                 car2_path_length=reference_path["car2_path_length"],
             )

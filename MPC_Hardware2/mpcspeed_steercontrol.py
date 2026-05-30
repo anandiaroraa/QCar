@@ -555,7 +555,7 @@ def main(live_pose=None):
     dl = 0.1
     
     #SWITCH TRAJECTORY
-    trajectory_type = "lemniscate"  # ← Change to "straight" or "lemniscate" for other trajectories
+    trajectory_type = "straight"  # ← Change to "straight" or "lemniscate" for other trajectories
     #switch for cw or ccw
     clockwise = True
     
@@ -578,13 +578,17 @@ def main(live_pose=None):
             start_angle=-math.pi/2 if clockwise else math.pi/2
         )
     else:  # straight
+        straight_heading = math.pi / 2.0
+        # Without an incoming pose this is only a local-frame preview.
+        straight_start_x = float(getattr(live_pose, "x", 0.0))
+        straight_start_y = float(getattr(live_pose, "y", 0.0))
         cx, cy, cyaw, ck, s = get_trajectory(
             "straight",
             length=LENGTH,
             ds=dl,
-            start_x=0.0,
-            start_y=0.0,
-            angle=0.0
+            start_x=straight_start_x,
+            start_y=straight_start_y,
+            angle=straight_heading
         )
     
 
